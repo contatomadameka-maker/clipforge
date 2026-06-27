@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipForge — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0c0f;
+    --surface: #131318;
+    --surface-2: #1a1a22;
+    --surface-3: #21212c;
+    --border: rgba(255,255,255,0.07);
+    --border-strong: rgba(255,255,255,0.12);
+    --text: #f0f0f5;
+    --text-2: #9090a8;
+    --text-3: #55556a;
+    --purple: #7c6df5;
+    --purple-dim: rgba(124,109,245,0.12);
+    --purple-border: rgba(124,109,245,0.25);
+    --green: #3ecf8e;
+    --green-dim: rgba(62,207,142,0.10);
+    --green-border: rgba(62,207,142,0.22);
+    --amber: #f59e0b;
+    --amber-dim: rgba(245,158,11,0.10);
+    --red: #f04444;
+    --red-dim: rgba(240,68,68,0.10);
+    --radius-sm: 6px;
+    --radius: 10px;
+    --radius-lg: 14px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* ── Sidebar ─────────────────────────────── */
+  .sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 10;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 11px;
+    padding: 20px 18px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo-mark {
+    width: 32px; height: 32px;
+    border-radius: 9px;
+    background: var(--purple);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .logo-mark svg { width: 16px; height: 16px; fill: #fff; }
+
+  .logo-name {
+    font-family: 'Inter Tight', sans-serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+
+  .nav {
+    flex: 1;
+    padding: 14px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+  }
+
+  .nav-label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-weight: 600;
+    padding: 10px 8px 5px;
+    margin-top: 4px;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    color: var(--text-2);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+    text-decoration: none;
+  }
+
+  .nav-item:hover { background: var(--surface-2); color: var(--text); }
+
+  .nav-item.active {
+    background: var(--purple-dim);
+    color: #a99cf8;
+  }
+
+  .nav-item .nav-icon {
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .nav-item .nav-icon svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+
+  .nav-badge {
+    margin-left: auto;
+    font-size: 10px;
+    font-weight: 600;
+    background: var(--purple);
+    color: #fff;
+    border-radius: 20px;
+    padding: 1px 7px;
+  }
+
+  .nav-badge.green {
+    background: var(--green-dim);
+    color: var(--green);
+  }
+
+  .sidebar-footer {
+    padding: 14px 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .credits-block {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin-bottom: 10px;
+  }
+
+  .credits-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .credits-label { font-size: 11px; color: var(--text-3); }
+  .credits-value { font-size: 15px; font-weight: 600; color: var(--text); }
+  .credits-sub { font-size: 10px; color: var(--text-3); }
+
+  .credits-bar {
+    height: 3px;
+    background: var(--border-strong);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+
+  .credits-fill {
+    height: 100%;
+    width: 42%;
+    background: var(--purple);
+    border-radius: 2px;
+  }
+
+  .btn-upgrade {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    padding: 9px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--purple-border);
+    background: var(--purple-dim);
+    color: #a99cf8;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+
+  .btn-upgrade:hover { background: rgba(124,109,245,0.18); }
+
+  .user-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 2px 0;
+  }
+
+  .user-avatar {
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--purple-dim);
+    border: 1px solid var(--purple-border);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: #a99cf8;
+    flex-shrink: 0;
+  }
+
+  .user-name { font-size: 12px; font-weight: 500; color: var(--text); }
+  .user-plan { font-size: 10px; color: var(--text-3); }
+
+  /* ── Main ────────────────────────────────── */
+  .main {
+    margin-left: 220px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    height: 56px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 28px;
+    gap: 14px;
+    background: var(--surface);
+    position: sticky;
+    top: 0;
+    z-index: 5;
+  }
+
+  .topbar-greeting {
+    flex: 1;
+    font-size: 13px;
+    color: var(--text-2);
+  }
+
+  .topbar-greeting strong { color: var(--text); font-weight: 500; }
+
+  .topbar-search {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 6px 12px;
+    cursor: text;
+  }
+
+  .topbar-search svg { width: 14px; height: 14px; stroke: var(--text-3); fill: none; stroke-width: 2; stroke-linecap: round; }
+  .topbar-search span { font-size: 12px; color: var(--text-3); }
+
+  .topbar-notif {
+    width: 34px; height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .topbar-notif svg { width: 16px; height: 16px; stroke: var(--text-2); fill: none; stroke-width: 1.75; stroke-linecap: round; }
+
+  .notif-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--purple);
+    position: absolute;
+    top: 7px; right: 7px;
+    border: 1.5px solid var(--surface);
+  }
+
+  /* ── Content ─────────────────────────────── */
+  .content {
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    max-width: 1100px;
+  }
+
+  /* ── Create cards ────────────────────────── */
+  .create-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+
+  .create-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 24px;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .create-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
+
+  .create-card.studio { border-color: var(--purple-border); }
+  .create-card.tiktok { border-color: var(--green-border); }
+
+  .create-card.studio:hover { border-color: var(--purple); background: rgba(124,109,245,0.05); }
+  .create-card.tiktok:hover { border-color: var(--green); background: rgba(62,207,142,0.05); }
+
+  .card-stripe {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .card-stripe.purple { background: var(--purple); }
+  .card-stripe.green { background: var(--green); }
+
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+
+  .card-icon {
+    width: 42px; height: 42px;
+    border-radius: 11px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .card-icon.purple { background: var(--purple-dim); }
+  .card-icon.green { background: var(--green-dim); }
+
+  .card-icon svg {
+    width: 20px; height: 20px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.75;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .card-icon.purple svg { stroke: var(--purple); }
+  .card-icon.green svg { stroke: var(--green); }
+
+  .card-text { flex: 1; }
+
+  .card-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 4px;
+  }
+
+  .card-label.purple { color: var(--purple); }
+  .card-label.green { color: var(--green); }
+
+  .card-title {
+    font-family: 'Inter Tight', sans-serif;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    margin-bottom: 4px;
+  }
+
+  .card-desc { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+  .card-steps {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .step-pill {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    color: var(--text-3);
+    background: var(--surface-2);
+  }
+
+  .card-cta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 4px;
+  }
+
+  .card-cta-hint { font-size: 11px; color: var(--text-3); }
+
+  .btn-create {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+    transition: opacity 0.12s;
+  }
+
+  .btn-create:hover { opacity: 0.88; }
+
+  .btn-create.purple { background: var(--purple); color: #fff; }
+  .btn-create.green { background: var(--green); color: #0c1a13; }
+
+  .btn-create svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ── Stats row ───────────────────────────── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .stat-value {
+    font-family: 'Inter Tight', sans-serif;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.03em;
+    line-height: 1;
+    margin-bottom: 5px;
+  }
+
+  .stat-delta {
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .stat-delta.up { color: var(--green); }
+  .stat-delta.neutral { color: var(--text-3); }
+
+  /* ── Bottom grid ─────────────────────────── */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 14px;
+    align-items: start;
+  }
+
+  /* ── Videos section ──────────────────────── */
+  .section-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border);
+    gap: 10px;
+  }
+
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    flex: 1;
+  }
+
+  .section-link {
+    font-size: 11px;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: color 0.12s;
+  }
+
+  .section-link:hover { color: var(--text-2); }
+
+  .video-list { }
+
+  .video-item {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+
+  .video-item:last-child { border-bottom: none; }
+  .video-item:hover { background: var(--surface-2); }
+
+  .video-thumb {
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-sm);
+    background: var(--surface-3);
+    border: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    font-size: 18px;
+  }
+
+  .video-info { flex: 1; min-width: 0; }
+  .video-title { font-size: 13px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .video-meta { font-size: 11px; color: var(--text-3); margin-top: 2px; display: flex; gap: 10px; }
+
+  .video-type-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .badge-studio { background: var(--purple-dim); color: #a99cf8; border: 1px solid var(--purple-border); }
+  .badge-tiktok { background: var(--green-dim); color: var(--green); border: 1px solid var(--green-border); }
+  .badge-processing { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,158,11,0.22); }
+
+  .video-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .icon-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.1s;
+  }
+
+  .icon-btn:hover { border-color: var(--border-strong); }
+  .icon-btn svg { width: 13px; height: 13px; stroke: var(--text-2); fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+
+  /* ── Right column ────────────────────────── */
+  .right-col { display: flex; flex-direction: column; gap: 14px; }
+
+  /* ── News / updates ──────────────────────── */
+  .news-list { }
+
+  .news-item {
+    display: flex;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .news-item:last-child { border-bottom: none; }
+
+  .news-dot-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding-top: 4px;
+    flex-shrink: 0;
+  }
+
+  .news-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .news-dot.purple { background: var(--purple); }
+  .news-dot.green { background: var(--green); }
+  .news-dot.amber { background: var(--amber); }
+
+  .news-line { width: 1px; flex: 1; background: var(--border); margin-top: 4px; }
+  .news-item:last-child .news-line { display: none; }
+
+  .news-tag {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 3px;
+  }
+
+  .news-tag.purple { color: var(--purple); }
+  .news-tag.green { color: var(--green); }
+  .news-tag.amber { color: var(--amber); }
+
+  .news-title { font-size: 12px; font-weight: 500; color: var(--text); margin-bottom: 2px; }
+  .news-desc { font-size: 11px; color: var(--text-2); line-height: 1.45; }
+  .news-time { font-size: 10px; color: var(--text-3); margin-top: 4px; }
+
+  /* ── Jobs queue ──────────────────────────── */
+  .queue-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .queue-item:last-child { border-bottom: none; }
+
+  .queue-spinner {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    border: 2px solid var(--purple-border);
+    border-top-color: var(--purple);
+    animation: spin 0.9s linear infinite;
+    flex-shrink: 0;
+  }
+
+  .queue-done-icon {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    background: var(--green-dim);
+    border: 1px solid var(--green-border);
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .queue-done-icon svg { width: 10px; height: 10px; stroke: var(--green); fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+
+  .queue-info { flex: 1; min-width: 0; }
+  .queue-name { font-size: 12px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .queue-step { font-size: 10px; color: var(--text-3); margin-top: 2px; }
+
+  .queue-eta {
+    font-size: 11px;
+    color: var(--text-3);
+    flex-shrink: 0;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Section divider label ───────────────── */
+  .section-eyebrow {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: -10px;
+  }
+
+  /* ── Empty state ─────────────────────────── */
+  .empty-state {
+    text-align: center;
+    padding: 32px 20px;
+    color: var(--text-3);
+    font-size: 12px;
+  }
+
+  @media (max-width: 900px) {
+    .create-grid { grid-template-columns: 1fr; }
+    .stats-row { grid-template-columns: 1fr 1fr; }
+    .bottom-grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ─────────────────────────────── -->
+<nav class="sidebar">
+  <div class="logo">
+    <div class="logo-mark">
+      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M5 3l14 9-14 9V3z"/></svg>
+    </div>
+    <span class="logo-name">ClipForge</span>
+  </div>
+
+  <nav class="nav">
+    <span class="nav-label">Menu</span>
+    <a class="nav-item active" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+      </span>
+      Dashboard
+    </a>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M15 10l4.553-2.069A1 1 0 0121 8.882v6.236a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+      </span>
+      Meus vídeos
+      <span class="nav-badge green">23</span>
+    </a>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M3 7h18M3 12h18M3 17h18"/></svg>
+      </span>
+      Projetos
+    </a>
+
+    <span class="nav-label">Criar</span>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M10 8l6 4-6 4V8z"/></svg>
+      </span>
+      Studio — YouTube
+    </a>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.477 2 2 6.477 2 12s4.477 10 10 10 10-4.477 10-10S17.523 2 12 2zM9.5 8.5l7 3.5-7 3.5V8.5z"/></svg>
+      </span>
+      TikTok Shop
+    </a>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>
+      </span>
+      Templates
+    </a>
+
+    <span class="nav-label">Conta</span>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M3 13.5A4.5 4.5 0 017.5 9h9a4.5 4.5 0 010 9h-9A4.5 4.5 0 013 13.5zM15 13.5a1.5 1.5 0 11-3 0 1.5 1.5 0 013 0z"/></svg>
+      </span>
+      Créditos e plano
+    </a>
+    <a class="nav-item" href="#">
+      <span class="nav-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 15a3 3 0 100-6 3 3 0 000 6z"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </span>
+      Configurações
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="credits-block">
+      <div class="credits-row">
+        <div>
+          <div class="credits-label">Créditos restantes</div>
+          <div class="credits-value">840 <span style="font-size:12px;font-weight:400;color:var(--text-3)">/ 2.000</span></div>
+        </div>
+      </div>
+      <div class="credits-bar"><div class="credits-fill"></div></div>
+    </div>
+    <button class="btn-upgrade">
+      <svg viewBox="0 0 24 24" width="13" height="13" style="stroke:#a99cf8;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+      Fazer upgrade para Creator
+    </button>
+    <div class="user-row">
+      <div class="user-avatar">DL</div>
+      <div>
+        <div class="user-name">Dirlei</div>
+        <div class="user-plan">Plano Pro</div>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Main content ───────────────────────── -->
+<div class="main">
+  <div class="topbar">
+    <div class="topbar-greeting">Bom dia, <strong>Dirlei</strong> — o que vamos criar hoje?</div>
+    <div class="topbar-search">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <span>Buscar vídeos e projetos...</span>
+    </div>
+    <div class="topbar-notif">
+      <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+      <div class="notif-dot"></div>
+    </div>
+  </div>
+
+  <div class="content">
+
+    <!-- Create cards -->
+    <div>
+      <div class="section-eyebrow">Criar novo vídeo</div>
+      <div style="height:14px"></div>
+      <div class="create-grid">
+
+        <!-- Studio card -->
+        <div class="create-card studio">
+          <div class="card-stripe purple"></div>
+          <div class="card-header">
+            <div class="card-icon purple">
+              <svg viewBox="0 0 24 24"><path d="M15 10l4.553-2.069A1 1 0 0121 8.882v6.236a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z"/></svg>
+            </div>
+            <div class="card-text">
+              <div class="card-label purple">Studio — YouTube</div>
+              <div class="card-title">Documentário com IA</div>
+              <div class="card-desc">Digite um tema e receba um vídeo completo — pesquisa, roteiro, narração, cenas e SEO prontos.</div>
+            </div>
+          </div>
+          <div class="card-steps">
+            <span class="step-pill">Pesquisa</span>
+            <span class="step-pill">Roteiro</span>
+            <span class="step-pill">Narração</span>
+            <span class="step-pill">Cenas</span>
+            <span class="step-pill">Edição</span>
+            <span class="step-pill">SEO</span>
+          </div>
+          <div class="card-cta">
+            <span class="card-cta-hint">5 a 15 min · 40–80 créditos</span>
+            <button class="btn-create purple">
+              <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Criar vídeo
+            </button>
+          </div>
+        </div>
+
+        <!-- TikTok card -->
+        <div class="create-card tiktok">
+          <div class="card-stripe green"></div>
+          <div class="card-header">
+            <div class="card-icon green">
+              <svg viewBox="0 0 24 24"><path d="M9 12a4 4 0 100 8 4 4 0 000-8z"/><path d="M15 2v10M15 2a4 4 0 004 4"/></svg>
+            </div>
+            <div class="card-text">
+              <div class="card-label green">TikTok Shop</div>
+              <div class="card-title">Vídeo de produto</div>
+              <div class="card-desc">Foto do produto → avatar falante → vídeo de vendas em 9:16. Pronto para publicar no TikTok.</div>
+            </div>
+          </div>
+          <div class="card-steps">
+            <span class="step-pill">Produto</span>
+            <span class="step-pill">Avatar</span>
+            <span class="step-pill">Script</span>
+            <span class="step-pill">Gerar</span>
+          </div>
+          <div class="card-cta">
+            <span class="card-cta-hint">até 60s · 8–25 créditos</span>
+            <button class="btn-create green">
+              <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Criar vídeo
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Vídeos gerados</div>
+        <div class="stat-value">23</div>
+        <div class="stat-delta up">↑ 3 esta semana</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Créditos usados</div>
+        <div class="stat-value">1.160</div>
+        <div class="stat-delta neutral">este mês</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Tempo economizado</div>
+        <div class="stat-value">31h</div>
+        <div class="stat-delta up">vs produção manual</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Plano atual</div>
+        <div class="stat-value" style="font-size:18px">Pro</div>
+        <div class="stat-delta neutral">Renova em 14 dias</div>
+      </div>
+    </div>
+
+    <!-- Bottom grid -->
+    <div class="bottom-grid">
+
+      <!-- Videos list -->
+      <div class="section-card">
+        <div class="section-header">
+          <span class="section-title">Vídeos recentes</span>
+          <span class="section-link">Ver todos →</span>
+        </div>
+        <div class="video-list">
+
+          <div class="video-item">
+            <div class="video-thumb">🎬</div>
+            <div class="video-info">
+              <div class="video-title">Davi e Golias — documentário bíblico</div>
+              <div class="video-meta"><span>8 min</span><span>Hoje, 14h22</span></div>
+            </div>
+            <span class="video-type-badge badge-processing">Gerando...</span>
+            <div class="video-actions">
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+          <div class="video-item">
+            <div class="video-thumb">📖</div>
+            <div class="video-info">
+              <div class="video-title">Noé e o dilúvio — história completa</div>
+              <div class="video-meta"><span>8 min</span><span>Ontem</span></div>
+            </div>
+            <span class="video-type-badge badge-studio">Studio</span>
+            <div class="video-actions">
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+          <div class="video-item">
+            <div class="video-thumb">🛍️</div>
+            <div class="video-info">
+              <div class="video-title">Tênis Nike Air Max — review unboxing</div>
+              <div class="video-meta"><span>30s</span><span>2 dias atrás</span></div>
+            </div>
+            <span class="video-type-badge badge-tiktok">TikTok</span>
+            <div class="video-actions">
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+          <div class="video-item">
+            <div class="video-thumb">💪</div>
+            <div class="video-info">
+              <div class="video-title">Propósito de vida — motivacional</div>
+              <div class="video-meta"><span>5 min</span><span>3 dias atrás</span></div>
+            </div>
+            <span class="video-type-badge badge-studio">Studio</span>
+            <div class="video-actions">
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+          <div class="video-item">
+            <div class="video-thumb">💄</div>
+            <div class="video-info">
+              <div class="video-title">Kit de maquiagem — oferta relâmpago</div>
+              <div class="video-meta"><span>15s</span><span>5 dias atrás</span></div>
+            </div>
+            <span class="video-type-badge badge-tiktok">TikTok</span>
+            <div class="video-actions">
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg></div>
+              <div class="icon-btn"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Right column -->
+      <div class="right-col">
+
+        <!-- Jobs em processamento -->
+        <div class="section-card">
+          <div class="section-header">
+            <span class="section-title">Em processamento</span>
+            <span class="section-link">Ver fila</span>
+          </div>
+          <div>
+            <div class="queue-item">
+              <div class="queue-spinner"></div>
+              <div class="queue-info">
+                <div class="queue-name">Davi e Golias</div>
+                <div class="queue-step">Storyboard · etapa 3 de 9</div>
+              </div>
+              <div class="queue-eta">~9 min</div>
+            </div>
+            <div class="queue-item">
+              <div class="queue-done-icon">
+                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <div class="queue-info">
+                <div class="queue-name">Moisés no Egito</div>
+                <div class="queue-step">Concluído · 12 min</div>
+              </div>
+              <div class="queue-eta" style="color:var(--green)">Pronto</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Novidades -->
+        <div class="section-card">
+          <div class="section-header">
+            <span class="section-title">Novidades</span>
+            <span class="section-link">Ver changelog</span>
+          </div>
+          <div class="news-list">
+
+            <div class="news-item">
+              <div class="news-dot-wrap"><div class="news-dot purple"></div><div class="news-line"></div></div>
+              <div>
+                <div class="news-tag purple">Novo</div>
+                <div class="news-title">Studio — Agente de música com Suno</div>
+                <div class="news-desc">Trilha sonora gerada automaticamente no estilo de cada vídeo.</div>
+                <div class="news-time">Hoje</div>
+              </div>
+            </div>
+
+            <div class="news-item">
+              <div class="news-dot-wrap"><div class="news-dot green"></div><div class="news-line"></div></div>
+              <div>
+                <div class="news-tag green">TikTok</div>
+                <div class="news-title">Publicação direta no TikTok Shop</div>
+                <div class="news-desc">Conecte sua conta e publique sem sair do ClipForge.</div>
+                <div class="news-time">3 dias atrás</div>
+              </div>
+            </div>
+
+            <div class="news-item">
+              <div class="news-dot-wrap"><div class="news-dot amber"></div><div class="news-line"></div></div>
+              <div>
+                <div class="news-tag amber">Melhoria</div>
+                <div class="news-title">Velocidade de render 2× mais rápida</div>
+                <div class="news-desc">Migramos para Runway Gen-4 — qualidade e velocidade maiores.</div>
+                <div class="news-time">1 semana atrás</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+</body>
+</html>
