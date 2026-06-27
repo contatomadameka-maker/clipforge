@@ -1,0 +1,56 @@
+# ── Node / Next.js ──────────────────────────
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# ── Env files ───────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+
+# ── Python / FastAPI ────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+venv/
+env/
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── OS ──────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Editors ─────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Logs ────────────────────────────────────
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Uploads / temp ──────────────────────────
+uploads/
+tmp/
+temp/
+
+# ── Celery ──────────────────────────────────
+celerybeat-schedule
+celerybeat.pid
