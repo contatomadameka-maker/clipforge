@@ -1,133 +1,49 @@
 # ─────────────────────────────────────────────────────────────
-# backend/services/shared/credit_service.py
-# Lógica central de créditos — débito, estorno, recarga
-# Regra: debitar ANTES de chamar qualquer API externa
+# backend/routers/credits.py
+# Endpoints de créditos — saldo, histórico, custos por operação
 # ─────────────────────────────────────────────────────────────
 
-from fastapi import HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from models.schemas import CreditBalanceResponse, CreditTransactionResponse
+from services.shared.credit_service import get_balance, CREDIT_COSTS
+from db.database import get_supabase
 from supabase import Client
+from typing import List
+
+router = APIRouter()
 
 
-# ── Custo por operação ────────────────────────────────────────
-# Fonte da verdade: tabela credit_costs no banco
-# Esses valores são o fallback caso a tabela não esteja acessível
-
-CREDIT_COSTS = {
-    # Studio (YouTube)
-    "studio_5min":  40,
-    "studio_8min":  65,
-    "studio_12min": 90,
-    "studio_15min": 110,
-    # TikTok
-    "tiktok_15s":   8,
-    "tiktok_30s":   15,
-    "tiktok_45s":   20,
-    "tiktok_60s":   25,
-    # Extras
-    "script_ai":    2,
-    "image_static": 1,
-}
-
-
-def get_operation_cost(operation: str) -> int:
-    """Retorna o custo em créditos de uma operação."""
-    return CREDIT_COSTS.get(operation, 0)
-
-
-async def get_balance(user_id: str, db: Client) -> int:
+@router.get("/balance/{user_id}", response_model=CreditBalanceResponse)
+async def credit_balance(user_id: str, db: Client = Depends(get_supabase)):
     """Retorna o saldo atual de créditos do usuário."""
-    res = db.table("user_credits").select("balance").eq("user_id", user_id).single().execute()
+    res = db.table("user_credits").select("*").eq("user_id", user_id).single().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    return res.data["balance"]
+    return res.data
 
 
-async def debit(
+@router.get("/transactions/{user_id}", response_model=List[CreditTransactionResponse])
+async def credit_transactions(
     user_id: str,
-    amount: int,
-    operation: str,
-    description: str,
-    db: Client,
-) -> int:
-    """
-    Debita créditos do usuário ANTES de chamar a API externa.
-    Retorna o novo saldo.
-    Lança 402 se saldo insuficiente.
-    """
-    # Busca saldo atual
-    balance = await get_balance(user_id, db)
-
-    if balance < amount:
-        raise HTTPException(
-            status_code=402,
-            detail=f"Saldo insuficiente. Você tem {balance} créditos, a operação custa {amount}."
-        )
-
-    # Debita
-    new_balance = balance - amount
-    db.table("user_credits").update({
-        "balance": new_balance,
-    }).eq("user_id", user_id).execute()
-
-    # Registra transação
-    db.table("credit_transactions").insert({
-        "user_id": user_id,
-        "amount": -amount,
-        "type": operation,
-        "description": description,
-    }).execute()
-
-    return new_balance
+    limit: int = 20,
+    db: Client = Depends(get_supabase),
+):
+    """Retorna o histórico de transações de crédito do usuário."""
+    res = (
+        db.table("credit_transactions")
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return res.data or []
 
 
-async def refund(
-    user_id: str,
-    amount: int,
-    operation: str,
-    description: str,
-    db: Client,
-) -> int:
-    """
-    Estorna créditos em caso de falha na geração.
-    Chamado automaticamente quando a API externa retorna erro.
-    """
-    balance = await get_balance(user_id, db)
-    new_balance = balance + amount
-
-    db.table("user_credits").update({
-        "balance": new_balance,
-    }).eq("user_id", user_id).execute()
-
-    db.table("credit_transactions").insert({
-        "user_id": user_id,
-        "amount": amount,
-        "type": "refund",
-        "description": f"Estorno automático: {description}",
-    }).execute()
-
-    return new_balance
-
-
-async def add_credits(
-    user_id: str,
-    amount: int,
-    type: str,
-    description: str,
-    db: Client,
-) -> int:
-    """Adiciona créditos (recarga de plano, bônus, manual pelo admin)."""
-    balance = await get_balance(user_id, db)
-    new_balance = balance + amount
-
-    db.table("user_credits").update({
-        "balance": new_balance,
-    }).eq("user_id", user_id).execute()
-
-    db.table("credit_transactions").insert({
-        "user_id": user_id,
-        "amount": amount,
-        "type": type,
-        "description": description,
-    }).execute()
-
-    return new_balance
+@router.get("/costs")
+async def credit_costs():
+    """Retorna a tabela de custos por operação (pública)."""
+    return {
+        "costs": CREDIT_COSTS,
+        "currency": "credits",
+    }
