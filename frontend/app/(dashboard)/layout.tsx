@@ -1,5 +1,7 @@
 "use client";
 
+export const dynamic = 'force-dynamic';
+
 // ─────────────────────────────────────────────────────────────
 // frontend/app/(dashboard)/layout.tsx
 // Layout compartilhado: sidebar + topbar para todas as páginas
