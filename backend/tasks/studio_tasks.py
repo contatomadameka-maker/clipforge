@@ -7,35 +7,29 @@ from celery import Celery
 from config import get_settings
 from db.database import get_supabase
 import asyncio
+import ssl
 
 settings = get_settings()
 
-# ── Celery app com SSL para Upstash ───────────────────────────
-redis_url = settings.redis_url
+# ── SSL para Upstash (rediss://) ──────────────────────────────
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
 
-# Upstash usa rediss:// (SSL) — precisa passar ssl_cert_reqs
-broker_url = redis_url
-result_backend = redis_url
+celery_app = Celery("clipforge")
 
-celery_app = Celery(
-    "clipforge",
-    broker=broker_url,
-    backend=result_backend,
-)
-
-celery_app.conf.update(
-    task_serializer="json",
-    accept_content=["json"],
-    result_serializer="json",
-    timezone="America/Sao_Paulo",
-    task_track_started=True,
-    broker_use_ssl={
-        "ssl_cert_reqs": "CERT_NONE",
-    },
-    redis_backend_use_ssl={
-        "ssl_cert_reqs": "CERT_NONE",
-    },
-)
+celery_app.config_from_object({
+    "broker_url": settings.redis_url,
+    "result_backend": settings.redis_url,
+    "task_serializer": "json",
+    "accept_content": ["json"],
+    "result_serializer": "json",
+    "timezone": "America/Sao_Paulo",
+    "task_track_started": True,
+    "broker_use_ssl": {"ssl_context": ssl_context},
+    "redis_backend_use_ssl": {"ssl_context": ssl_context},
+    "broker_connection_retry_on_startup": True,
+})
 
 # Nomes dos agentes para exibir no frontend
 AGENT_NAMES = {
@@ -52,7 +46,6 @@ AGENT_NAMES = {
 
 
 def update_progress(project_id: str, agent: int, status: str, message: str = ""):
-    """Atualiza o status do projeto no banco — frontend lê via WebSocket."""
     db = get_supabase()
     db.table("studio_projects").update({
         "current_agent": agent,
@@ -63,13 +56,11 @@ def update_progress(project_id: str, agent: int, status: str, message: str = "")
 
 
 def mark_error(project_id: str, agent: int, error: str, user_id: str, credits: int):
-    """Marca erro e estorna créditos automaticamente."""
     db = get_supabase()
     db.table("studio_projects").update({
         "status": "error",
         "error_message": f"Erro no agente {agent} ({AGENT_NAMES[agent]}): {error}",
     }).eq("id", project_id).execute()
-
     asyncio.run(_refund_credits(user_id, credits, project_id))
     print(f"[Pipeline] ERRO no agente {agent}: {error} — créditos estornados")
 
