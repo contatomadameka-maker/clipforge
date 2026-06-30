@@ -69,14 +69,11 @@ export default function LoginPage() {
         .cf-login-root {
           min-height: 100vh;
           display: flex;
+          align-items: stretch;
           font-family: 'Inter', system-ui, sans-serif;
           background: #080810;
           position: relative;
           overflow: hidden;
-        }
-
-        .cf-left, .cf-right {
-          min-height: 100vh;
         }
 
         /* ── Fundo animado ─────────────────────────────── */
@@ -183,11 +180,13 @@ export default function LoginPage() {
           width: 480px;
           flex-shrink: 0;
           display: flex;
+          flex-direction: column;
           align-items: center;
           justify-content: center;
           padding: 32px;
           position: relative;
           z-index: 1;
+          min-height: 100vh;
         }
 
         /* ── Logo ──────────────────────────────────────── */
