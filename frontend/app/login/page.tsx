@@ -184,6 +184,7 @@ export default function LoginPage() {
           align-items: center;
           justify-content: center;
           padding: 32px;
+          padding-bottom: 80px;
           position: relative;
           z-index: 1;
           min-height: 100vh;
