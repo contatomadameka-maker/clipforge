@@ -8,7 +8,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/useAuth";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 type Tab = "profile" | "password" | "plan";
 
@@ -47,6 +47,7 @@ export default function SettingsPage() {
     setSavingProfile(true);
     setProfileMsg(null);
     try {
+      const supabase = getSupabase();
       const { error } = await supabase.auth.updateUser({
         data: { name },
       });
@@ -75,6 +76,7 @@ export default function SettingsPage() {
 
     setSavingPass(true);
     try {
+      const supabase = getSupabase();
       const { error } = await supabase.auth.updateUser({ password: newPass });
       if (error) throw error;
       setPassMsg({ type: "ok", text: "Senha alterada com sucesso." });
