@@ -224,10 +224,8 @@ export default function LoginPage() {
 
         /* ── Hero text ─────────────────────────────────── */
         .cf-hero {
-          flex: 1;
           display: flex;
           flex-direction: column;
-          justify-content: center;
           max-width: 520px;
         }
 
