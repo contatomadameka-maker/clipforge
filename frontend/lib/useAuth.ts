@@ -15,9 +15,16 @@ interface AuthState {
 }
 
 export function useAuth() {
+  const [mounted, setMounted] = useState(false);
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+
     // Verifica sessão atual ao carregar
     supabase.auth.getSession().then(({ data: { session } }) => {
       setState({ user: session?.user ?? null, loading: false });
@@ -29,7 +36,7 @@ export function useAuth() {
     });
 
     return () => listener.subscription.unsubscribe();
-  }, []);
+  }, [mounted]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
