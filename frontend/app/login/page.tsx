@@ -142,19 +142,20 @@ export default function LoginPage() {
           display: flex;
           flex-direction: column;
           justify-content: center;
-          padding: 0 56px;
+          padding: 48px 56px;
           min-width: 0;
           overflow: hidden;
+          gap: 0;
         }
 
         .lg2-logo {
-          position: absolute;
-          top: 48px;
-          left: 56px;
           display: flex;
           align-items: center;
           gap: 12px;
           text-decoration: none;
+          position: absolute;
+          top: 40px;
+          left: 56px;
         }
         .lg2-logo-mark {
           width: 38px; height: 38px;
