@@ -69,7 +69,8 @@ export default function LoginPage() {
           display: grid;
           grid-template-columns: 1fr 480px;
           width: 100%;
-          height: 100vh;
+          height: 100dvh;
+          min-height: 600px;
           background: #080810;
           font-family: 'Inter', system-ui, sans-serif;
           overflow: hidden;
