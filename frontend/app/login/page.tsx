@@ -246,13 +246,16 @@ export default function LoginPage() {
 
         /* ── Coluna direita ────────────────────────────── */
         .lg2-right {
-          position: relative;
-          z-index: 1;
+          position: fixed;
+          top: 0;
+          right: 0;
+          width: 480px;
+          height: 100%;
+          z-index: 2;
           display: flex;
           align-items: center;
           justify-content: center;
           padding: 24px;
-          min-width: 0;
           overflow-y: auto;
         }
 
