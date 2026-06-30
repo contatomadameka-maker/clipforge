@@ -1,97 +1,76 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/auth.py
-# Registro, login e perfil — via Supabase Auth
+# Registro, login, perfil e sincronização — via Supabase Auth
 # ─────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException, Depends
-from models.schemas import RegisterRequest, LoginRequest, AuthResponse, ProfileResponse
+from pydantic import BaseModel, EmailStr
+from models.schemas import RegisterRequest, LoginRequest, AuthResponse, ProfileResponse, MessageResponse
 from db.database import get_supabase
 from supabase import Client
 
 router = APIRouter()
 
 
-# ── Registro ──────────────────────────────────────────────────
+class SyncProfileRequest(BaseModel):
+    user_id: str
+    name: str
+    email: EmailStr
 
-@router.post("/register", response_model=AuthResponse)
-async def register(data: RegisterRequest, db: Client = Depends(get_supabase)):
+
+# ── Sincroniza perfil (chamado pelo frontend após signUp no Supabase Auth) ──
+
+@router.post("/sync-profile", response_model=MessageResponse)
+async def sync_profile(data: SyncProfileRequest, db: Client = Depends(get_supabase)):
+    """
+    O Supabase Auth já criou o usuário. Aqui criamos o perfil,
+    o saldo de créditos inicial e o bônus de onboarding.
+    Idempotente: se já existir, não duplica.
+    """
     try:
-        # Cria usuário no Supabase Auth
-        res = db.auth.sign_up({
-            "email": data.email,
-            "password": data.password,
-        })
+        # Verifica se o perfil já existe
+        existing = db.table("profiles").select("id").eq("id", data.user_id).execute()
 
-        if not res.user:
-            raise HTTPException(status_code=400, detail="Erro ao criar usuário")
+        if existing.data:
+            return {"message": "Perfil já sincronizado"}
 
-        user_id = res.user.id
-
-        # Cria perfil na tabela profiles
+        # Cria perfil
         db.table("profiles").insert({
-            "id": user_id,
+            "id": data.user_id,
             "name": data.name,
             "email": data.email,
             "plan": "starter",
         }).execute()
 
-        # Cria saldo inicial de créditos (50 de bônus onboarding)
+        # Cria saldo de créditos com bônus de onboarding
         db.table("user_credits").insert({
-            "user_id": user_id,
+            "user_id": data.user_id,
             "balance": 50,
         }).execute()
 
-        # Registra a transação de bônus
+        # Registra a transação do bônus
         db.table("credit_transactions").insert({
-            "user_id": user_id,
+            "user_id": data.user_id,
             "amount": 50,
             "type": "bonus",
             "description": "Bônus de boas-vindas ao ClipForge",
         }).execute()
 
-        return AuthResponse(
-            access_token=res.session.access_token if res.session else "",
-            user_id=user_id,
-            email=data.email,
-            name=data.name,
-            plan="starter",
-        )
+        return {"message": "Perfil criado com sucesso"}
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        # Não derruba o cadastro do usuário se a sincronização falhar
+        # — pode ser tentado novamente no próximo login
+        print(f"[sync-profile] Erro: {e}")
+        return {"message": "Perfil será sincronizado no próximo acesso"}
 
 
-# ── Login ─────────────────────────────────────────────────────
+# ── Perfil do usuário autenticado ────────────────────────────
 
-@router.post("/login", response_model=AuthResponse)
-async def login(data: LoginRequest, db: Client = Depends(get_supabase)):
-    try:
-        res = db.auth.sign_in_with_password({
-            "email": data.email,
-            "password": data.password,
-        })
-
-        if not res.user or not res.session:
-            raise HTTPException(status_code=401, detail="Credenciais inválidas")
-
-        # Busca perfil
-        profile = db.table("profiles").select("*").eq("id", res.user.id).single().execute()
-
-        return AuthResponse(
-            access_token=res.session.access_token,
-            user_id=res.user.id,
-            email=res.user.email,
-            name=profile.data.get("name", ""),
-            plan=profile.data.get("plan", "starter"),
-        )
-
-    except Exception as e:
-        raise HTTPException(status_code=401, detail="Email ou senha incorretos")
-
-
-# ── Perfil ────────────────────────────────────────────────────
-
-@router.get("/me", response_model=ProfileResponse)
-async def get_me(db: Client = Depends(get_supabase)):
-    # TODO: extrair user_id do JWT token (implementar middleware)
-    raise HTTPException(status_code=501, detail="Middleware de auth pendente")
+@router.get("/profile/{user_id}", response_model=ProfileResponse)
+async def get_profile(user_id: str, db: Client = Depends(get_supabase)):
+    """Retorna o perfil completo do usuário."""
+    res = db.table("profiles").select("*").eq("id", user_id).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Perfil não encontrado")
+    return res.data
