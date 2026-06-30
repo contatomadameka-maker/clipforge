@@ -168,7 +168,7 @@ export default function LoginPage() {
           flex: 1;
           display: flex;
           flex-direction: column;
-          justify-content: space-between;
+          justify-content: center;
           padding: 48px 56px;
           position: relative;
           z-index: 1;
@@ -191,6 +191,9 @@ export default function LoginPage() {
           align-items: center;
           gap: 12px;
           text-decoration: none;
+          position: absolute;
+          top: 48px;
+          left: 56px;
         }
 
         .cf-logo-mark {
@@ -317,6 +320,9 @@ export default function LoginPage() {
           gap: 6px;
           font-size: 12px;
           color: #55556a;
+          position: absolute;
+          bottom: 40px;
+          left: 56px;
         }
 
         .cf-footer-left a { color: #55556a; text-decoration: none; }
@@ -645,11 +651,11 @@ export default function LoginPage() {
               <span className="cf-headline-accent">que vende.</span>
             </h1>
             <p className="cf-subtext">
-              Documentários para YouTube e vídeos de produto para TikTok Shop — gerados por IA em minutos.
+              Qualquer ideia vira vídeo pronto — para YouTube, TikTok Shop, ou onde sua audiência estiver. Roteiro, narração e edição, gerados por IA.
             </p>
             <div className="cf-features">
               {[
-                { icon: "M15 10l4.553-2.069A1 1 0 0121 8.882v6.236a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z", text: "Pipeline de 9 agentes de IA para vídeos YouTube" },
+                { icon: "M15 10l4.553-2.069A1 1 0 0121 8.882v6.236a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z", text: "Pipeline de 9 agentes de IA para qualquer formato longo" },
                 { icon: "M9 12a4 4 0 100 8 4 4 0 000-8zM15 2v10M15 2a4 4 0 004 4", text: "Canvas de 4 blocos para TikTok Shop" },
                 { icon: "M13 10V3L4 14h7v7l9-11h-7z", text: "Pesquisa, roteiro, narração e SEO automáticos" },
               ].map((f, i) => (
