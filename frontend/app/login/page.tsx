@@ -263,6 +263,7 @@ export default function LoginPage() {
         .lg2-card {
           width: 100%;
           max-width: 400px;
+          margin-top: -80px;
           background: rgba(19, 19, 24, 0.92);
           border: 0.5px solid rgba(255,255,255,0.1);
           border-radius: 20px;
