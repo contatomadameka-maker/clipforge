@@ -66,8 +66,15 @@ export default function LoginPage() {
       <style>{`
         * { box-sizing: border-box; margin: 0; padding: 0; }
 
+        html, body {
+          height: 100%;
+          margin: 0;
+          padding: 0;
+        }
+
         .cf-login-root {
-          min-height: 100vh;
+          height: 100vh;
+          max-height: 100vh;
           display: flex;
           align-items: stretch;
           font-family: 'Inter', system-ui, sans-serif;
@@ -174,6 +181,8 @@ export default function LoginPage() {
           padding: 48px 56px;
           position: relative;
           z-index: 1;
+          height: 100%;
+          overflow: hidden;
         }
 
         .cf-right {
@@ -184,10 +193,9 @@ export default function LoginPage() {
           align-items: center;
           justify-content: center;
           padding: 32px;
-          padding-bottom: 80px;
           position: relative;
           z-index: 1;
-          min-height: 100vh;
+          height: 100%;
         }
 
         /* ── Logo ──────────────────────────────────────── */
