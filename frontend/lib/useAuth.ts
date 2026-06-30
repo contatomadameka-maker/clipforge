@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { useState, useEffect, useCallback } from "react";
-import { supabase } from "./supabase";
+import { getSupabase } from "./supabase";
 import type { User } from "@supabase/supabase-js";
 
 interface AuthState {
@@ -15,36 +15,31 @@ interface AuthState {
 }
 
 export function useAuth() {
-  const [mounted, setMounted] = useState(false);
   const [state, setState] = useState<AuthState>({ user: null, loading: true });
 
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    const supabase = getSupabase();
 
-  useEffect(() => {
-    if (!mounted) return;
-
-    // Verifica sessão atual ao carregar
     supabase.auth.getSession().then(({ data: { session } }) => {
       setState({ user: session?.user ?? null, loading: false });
     });
 
-    // Escuta mudanças de autenticação (login, logout, refresh de token)
     const { data: listener } = supabase.auth.onAuthStateChange((_event, session) => {
       setState({ user: session?.user ?? null, loading: false });
     });
 
     return () => listener.subscription.unsubscribe();
-  }, [mounted]);
+  }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
+    const supabase = getSupabase();
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
     return data;
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, name: string) => {
+    const supabase = getSupabase();
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
@@ -52,9 +47,6 @@ export function useAuth() {
     });
     if (error) throw error;
 
-    // Cria o perfil e créditos iniciais via backend
-    // (o backend faz isso no endpoint /auth/register, mas o Supabase
-    // Auth já criou o usuário — aqui só garantimos a sincronização)
     if (data.user) {
       try {
         await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/sync-profile`, {
@@ -75,6 +67,7 @@ export function useAuth() {
   }, []);
 
   const signInWithGoogle = useCallback(async () => {
+    const supabase = getSupabase();
     const { data, error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
@@ -86,6 +79,7 @@ export function useAuth() {
   }, []);
 
   const signOut = useCallback(async () => {
+    const supabase = getSupabase();
     const { error } = await supabase.auth.signOut();
     if (error) throw error;
   }, []);
