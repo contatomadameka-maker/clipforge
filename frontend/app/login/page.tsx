@@ -75,6 +75,10 @@ export default function LoginPage() {
           overflow: hidden;
         }
 
+        .cf-left, .cf-right {
+          min-height: 100vh;
+        }
+
         /* ── Fundo animado ─────────────────────────────── */
         .cf-bg {
           position: absolute;
