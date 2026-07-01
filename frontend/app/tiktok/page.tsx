@@ -666,7 +666,7 @@ const initialNodes: Node[] = [
   },
 ];
 
-export default function TikTokCanvasPage() {
+export default function TikTokCanvasInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
