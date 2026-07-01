@@ -726,7 +726,20 @@ export default function TikTokCanvasInner() {
   }
 
   return (
-    <div className="flex flex-col" style={{ height: "calc(100vh - 56px)", background: "#07070d" }}>
+    <div className="flex flex-col" style={{ height: "calc(100vh - 56px)", background: "#0a0a10" }}>
+      <style>{`
+        .react-flow__minimap { border-radius: 10px; overflow: hidden; }
+        .react-flow__controls { border-radius: 10px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+        .react-flow__controls-button { background: rgba(14,14,20,0.95) !important; border-color: rgba(255,255,255,0.1) !important; color: #9090a8 !important; }
+        .react-flow__controls-button:hover { background: rgba(30,30,40,0.95) !important; }
+        .react-flow__controls-button svg { fill: #9090a8 !important; }
+        .react-flow__edge-path { stroke-width: 2 !important; }
+        .react-flow__edge:hover .react-flow__edge-path { stroke: #a99cf8 !important; stroke-width: 3 !important; cursor: pointer; }
+        .react-flow__handle { transition: transform 0.15s; }
+        .react-flow__handle:hover { transform: scale(1.4); }
+        /* Remove scrollbar estranho */
+        .react-flow__pane::-webkit-scrollbar { display: none; }
+      `}</style>
 
       {/* Topbar */}
       <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 z-50"
@@ -777,11 +790,20 @@ export default function TikTokCanvasInner() {
             onInit={setRfInstance}
             onNodeClick={(_, node) => setSelectedNodeId(node.id)}
             onPaneClick={() => setSelectedNodeId(null)}
+            onEdgeClick={(_, edge) => setEdges(eds => eds.filter(e => e.id !== edge.id))}
+            deleteKeyCode={["Backspace", "Delete"]}
             fitView
-            style={{ background: "#07070d" }}
+            style={{ background: "#0a0a10" }}
             defaultEdgeOptions={{ animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }}
+            proOptions={{ hideAttribution: true }}
           >
-            <Background variant={BackgroundVariant.Dots} gap={28} size={1} color="rgba(255,255,255,0.06)" />
+            <Background 
+              variant={BackgroundVariant.Cross} 
+              gap={32} 
+              size={1.5}
+              color="rgba(255,255,255,0.08)"
+              style={{ background: "#0a0a10" }}
+            />
             <Controls style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} />
             <MiniMap style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} nodeColor={() => "#7c6df5"} />
             <Panel position="top-right" style={{ marginRight: "12px", marginTop: "12px" }}>
