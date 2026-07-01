@@ -202,8 +202,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-        <main className="flex-1">{children}</main>
+       <main className="flex-1" style={{ height: "calc(100vh - 56px)", overflow: "hidden" }}>
+          {children}
+        </main>
       </div>
     </div>
   );
+}
 }
