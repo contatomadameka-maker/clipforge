@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { useState, useCallback, useRef } from "react";
-import ReactFlow, {
+import { ReactFlow,
   Background,
   Controls,
   MiniMap,
@@ -28,7 +28,7 @@ import "@xyflow/react/dist/style.css";
 
 type BlockType = "produto" | "cenario" | "avatar" | "copy" | "gerar";
 
-interface BlockData {
+interface BlockData extends Record<string, unknown> {
   label: string;
   type: BlockType;
   // produto
@@ -122,7 +122,7 @@ function BaseBlock({ type, children, selected, onConfigure }: {
 // ── Nó: Produto ───────────────────────────────────────────────
 
 function ProdutoNode({ data, selected }: NodeProps) {
-  const d = (data as unknown) as BlockData;
+  const d = data as BlockData;
   return (
     <>
       <Handle type="source" position={Position.Right} style={handleStyle} />
@@ -149,7 +149,7 @@ function ProdutoNode({ data, selected }: NodeProps) {
 // ── Nó: Cenário ───────────────────────────────────────────────
 
 function CenarioNode({ data, selected }: NodeProps) {
-  const d = (data as unknown) as BlockData;
+  const d = data as BlockData;
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -183,7 +183,7 @@ const AVATAR_EMOJIS: Record<string, string> = {
 };
 
 function AvatarNode({ data, selected }: NodeProps) {
-  const d = (data as unknown) as BlockData;
+  const d = data as BlockData;
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -214,7 +214,7 @@ function AvatarNode({ data, selected }: NodeProps) {
 // ── Nó: Copy ─────────────────────────────────────────────────
 
 function CopyNode({ data, selected }: NodeProps) {
-  const d = (data as unknown) as BlockData;
+  const d = data as BlockData;
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -245,7 +245,7 @@ function CopyNode({ data, selected }: NodeProps) {
 // ── Nó: Gerar ────────────────────────────────────────────────
 
 function GerarNode({ data, selected }: NodeProps) {
-  const d = (data as unknown) as BlockData;
+  const d = data as BlockData;
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
