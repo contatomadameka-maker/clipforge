@@ -936,6 +936,7 @@ export default function TikTokCanvasInner() {
     }
   }
 
+  const nodesWithConfig = nodes.map(n => ({
     ...n,
     data: {
       ...n.data,
