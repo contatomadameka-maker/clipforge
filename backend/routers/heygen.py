@@ -17,7 +17,7 @@ HEYGEN_API_URL = "https://api.heygen.com"
 class GenerateVideoRequest(BaseModel):
     avatar_id: str
     script: str
-    voice_id: str = "6872a840c4194f42a7f8ce8aee47660c"  # Pedro Lima - Friendly (PT-BR)
+    voice_id: str = "6872a840c4194f42a7f8ce0aee47660c"  # Pedro Lima - Friendly (PT-BR)
     background_color: str = "#ffffff"
     width: int = 1080
     height: int = 1920
