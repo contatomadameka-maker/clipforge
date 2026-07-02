@@ -17,7 +17,7 @@ HEYGEN_API_URL = "https://api.heygen.com"
 class GenerateVideoRequest(BaseModel):
     avatar_id: str
     script: str
-    voice_id: str = "en-US-JennyNeural"
+    voice_id: str = "6872a840c4194f42a7f8ce8aee47660c"  # Pedro Lima - Friendly (PT-BR)
     background_color: str = "#ffffff"
     width: int = 1080
     height: int = 1920
@@ -44,7 +44,7 @@ async def list_avatars():
         res = await client.get(
             f"{HEYGEN_API_URL}/v2/avatars",
             headers={"X-Api-Key": settings.heygen_api_key},
-            timeout=30,
+            timeout=60,
         )
         if res.status_code != 200:
             raise HTTPException(status_code=res.status_code, detail="Erro ao buscar avatares")
