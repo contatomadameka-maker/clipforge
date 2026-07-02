@@ -73,11 +73,12 @@ const handleStyle = {
 
 // ── Bloco base ────────────────────────────────────────────────
 
-function BaseBlock({ type, children, selected, onConfigure }: {
+function BaseBlock({ type, children, selected, onConfigure, onDelete }: {
   type: BlockType;
   children: React.ReactNode;
   selected: boolean;
   onConfigure: () => void;
+  onDelete: () => void;
 }) {
   const cfg = BLOCK_CONFIG[type];
   return (
@@ -99,17 +100,27 @@ function BaseBlock({ type, children, selected, onConfigure }: {
           style={{ background: cfg.bg, border: `0.5px solid ${cfg.color}44` }}>
           {cfg.icon}
         </div>
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold leading-none mb-0.5" style={{ color: cfg.color }}>{cfg.label}</p>
           <p className="text-[10px] leading-none" style={{ color: "#55556a" }}>{cfg.desc}</p>
         </div>
         <button
-          className="ml-auto w-6 h-6 rounded-md flex items-center justify-center border-none cursor-pointer transition-all hover:opacity-80"
+          className="w-6 h-6 rounded-md flex items-center justify-center border-none cursor-pointer transition-all hover:opacity-80"
           style={{ background: "rgba(255,255,255,0.06)" }}
           onClick={e => { e.stopPropagation(); onConfigure(); }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+        </button>
+        <button
+          className="w-6 h-6 rounded-md flex items-center justify-center border-none cursor-pointer transition-all hover:opacity-80"
+          style={{ background: "rgba(248,113,113,0.1)" }}
+          onClick={e => { e.stopPropagation(); onDelete(); }}
+          title="Deletar bloco"
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
           </svg>
         </button>
       </div>
@@ -711,6 +722,11 @@ export default function TikTokCanvasInner() {
     data: {
       ...n.data,
       onConfigure: () => setSelectedNodeId(n.id),
+      onDelete: () => {
+        setNodes(nds => nds.filter(node => node.id !== n.id));
+        setEdges(eds => eds.filter(e => e.source !== n.id && e.target !== n.id));
+        if (selectedNodeId === n.id) setSelectedNodeId(null);
+      },
     },
   }));
 
@@ -799,11 +815,11 @@ export default function TikTokCanvasInner() {
             proOptions={{ hideAttribution: true }}
           >
             <Background 
-              variant={BackgroundVariant.Cross} 
-              gap={32} 
-              size={1.5}
-              color="rgba(200,200,220,0.15)"
-              style={{ background: "#f0f0f8" }}
+              variant={BackgroundVariant.Dots}
+              gap={16}
+              size={1}
+              color="#c8c8d0"
+              style={{ background: "#f5f5f7" }}
             />
             <Controls style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} />
             <MiniMap style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} nodeColor={() => "#7c6df5"} />
