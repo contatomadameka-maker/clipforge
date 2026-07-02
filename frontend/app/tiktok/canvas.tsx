@@ -305,6 +305,107 @@ const nodeTypes = {
   gerar: GerarNode,
 };
 
+// ── Avatar Picker com avatares reais do HeyGen ───────────────
+
+interface HeyGenAvatar {
+  avatar_id: string;
+  avatar_name: string;
+  gender: string;
+  preview_image_url: string;
+}
+
+function AvatarPicker({ node, update }: { node: Node<BlockData>; update: (patch: Partial<BlockData>) => void }) {
+  const [avatars, setAvatars] = useState<HeyGenAvatar[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    fetch("https://clipforge-6yzz.onrender.com/heygen/avatars")
+      .then(r => r.json())
+      .then(d => { setAvatars(d.avatars || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const filtered = avatars.filter(av =>
+    av.avatar_name.toLowerCase().includes(search.toLowerCase())
+  ).slice(0, 18);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Apresentador</label>
+        <input
+          type="text"
+          placeholder="Buscar avatar..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          className="w-full h-8 px-3 rounded-[8px] text-xs outline-none mb-2 placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}
+        />
+        {loading ? (
+          <div className="flex items-center justify-center py-8 gap-2">
+            <div className="w-4 h-4 border-2 border-[#3ecf8e]/30 border-t-[#3ecf8e] rounded-full animate-spin" />
+            <span className="text-xs text-[#55556a]">Carregando avatares...</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+            {filtered.map(av => (
+              <button key={av.avatar_id} type="button"
+                onClick={() => update({ avatarId: av.avatar_id, avatarName: av.avatar_name } as any)}
+                className="flex flex-col items-center gap-1 p-2 rounded-xl cursor-pointer border-none transition-all hover:scale-[1.02]"
+                style={node.data.avatarId === av.avatar_id
+                  ? { background: "rgba(62,207,142,0.15)", border: "0.5px solid rgba(62,207,142,0.4)" }
+                  : { background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                <img
+                  src={av.preview_image_url}
+                  alt={av.avatar_name}
+                  className="w-14 h-14 rounded-lg object-cover"
+                  onError={e => { (e.target as HTMLImageElement).src = "https://placehold.co/56x56/1a1a22/9090a8?text=Avatar"; }}
+                />
+                <span className="text-[9px] text-center leading-tight" style={{ color: node.data.avatarId === av.avatar_id ? "#3ecf8e" : "#9090a8" }}>
+                  {av.avatar_name.split(" ").slice(0, 2).join(" ")}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Estilo</label>
+        <div className="flex flex-col gap-1.5">
+          {["UGC unboxing", "Review", "Tutorial", "Oferta relâmpago"].map(s => (
+            <button key={s} type="button" onClick={() => update({ avatarStyle: s })}
+              className="flex items-center gap-2 px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none text-left"
+              style={node.data.avatarStyle === s
+                ? { background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
+                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                style={{ background: node.data.avatarStyle === s ? "#3ecf8e" : "#55556a" }} />
+              {s}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Idioma</label>
+        <div className="flex gap-2">
+          {[{ id: "pt-br", label: "🇧🇷 PT-BR" }, { id: "en", label: "🇺🇸 EN" }, { id: "es", label: "🇪🇸 ES" }].map(l => (
+            <button key={l.id} type="button" onClick={() => update({ language: l.id })}
+              className="flex-1 py-2 rounded-[8px] text-xs font-medium cursor-pointer border-none"
+              style={node.data.language === l.id
+                ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
+                : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Painel lateral — configuração do bloco ────────────────────
 
 function ConfigPanel({ node, onUpdate, onClose }: {
@@ -506,61 +607,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
 
         {/* ── AVATAR ── */}
         {type === "avatar" && (
-          <>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Apresentador</label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { id: "av1", name: "Ana", emoji: "👩🏽", desc: "Natural" },
-                  { id: "av2", name: "Carlos", emoji: "👨🏻", desc: "Review" },
-                  { id: "av3", name: "Bia", emoji: "👩🏻‍🦱", desc: "Tutorial" },
-                  { id: "av4", name: "Diego", emoji: "👨🏽‍🦰", desc: "Oferta" },
-                  { id: "av5", name: "Julia", emoji: "👩🏼", desc: "UGC" },
-                  { id: "av6", name: "Rafael", emoji: "👨🏾", desc: "Tech" },
-                ].map(av => (
-                  <button key={av.id} type="button" onClick={() => update({ avatarId: av.id })}
-                    className="flex flex-col items-center gap-1 p-2.5 rounded-xl cursor-pointer border-none transition-all hover:scale-[1.02]"
-                    style={node.data.avatarId === av.id
-                      ? { background: "rgba(62,207,142,0.15)", border: "0.5px solid rgba(62,207,142,0.4)" }
-                      : { background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-                    <span className="text-2xl">{av.emoji}</span>
-                    <span className="text-[10px] font-medium" style={{ color: node.data.avatarId === av.id ? "#3ecf8e" : "#9090a8" }}>{av.name}</span>
-                    <span className="text-[9px] text-[#55556a]">{av.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Estilo</label>
-              <div className="flex flex-col gap-1.5">
-                {["UGC unboxing", "Review", "Tutorial", "Oferta relâmpago"].map(s => (
-                  <button key={s} type="button" onClick={() => update({ avatarStyle: s })}
-                    className="flex items-center gap-2 px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none text-left"
-                    style={node.data.avatarStyle === s
-                      ? { background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
-                      : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-                    <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                      style={{ background: node.data.avatarStyle === s ? "#3ecf8e" : "#55556a" }} />
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Idioma</label>
-              <div className="flex gap-2">
-                {[{ id: "pt-br", label: "🇧🇷 PT-BR" }, { id: "en", label: "🇺🇸 EN" }, { id: "es", label: "🇪🇸 ES" }].map(l => (
-                  <button key={l.id} type="button" onClick={() => update({ language: l.id })}
-                    className="flex-1 py-2 rounded-[8px] text-xs font-medium cursor-pointer border-none"
-                    style={node.data.language === l.id
-                      ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {l.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
+          <AvatarPicker node={node} update={update} />
         )}
 
         {/* ── COPY ── */}
