@@ -276,15 +276,22 @@ function GerarNode({ data, selected }: NodeProps) {
             </div>
           </div>
         ) : d.status === "done" ? (
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ background: "rgba(62,207,142,0.15)" }}>
-              ✅
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                style={{ background: "rgba(62,207,142,0.15)" }}>✅</div>
+              <div>
+                <p className="text-xs font-medium text-[#3ecf8e]">Pronto!</p>
+                <p className="text-[10px] text-[#55556a]">Vídeo gerado</p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium text-[#3ecf8e]">Pronto!</p>
-              <p className="text-[10px] text-[#55556a]">Clique para baixar</p>
-            </div>
+            {(d as any).videoUrl && (
+              <a href={(d as any).videoUrl as string} target="_blank" rel="noopener noreferrer"
+                className="flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[10px] font-medium no-underline"
+                style={{ background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
+                ⬇️ Baixar vídeo
+              </a>
+            )}
           </div>
         ) : (
           <div className="flex flex-col items-center py-3 gap-1.5">
@@ -813,7 +820,122 @@ export default function TikTokCanvasInner() {
   }
 
   // Injeta onConfigure em cada node
-  const nodesWithConfig = nodes.map(n => ({
+  const API = "https://clipforge-6yzz.onrender.com";
+
+  async function handleGerarTodos() {
+    // Encontra todos os blocos Gerar conectados
+    const gerarNodes = nodes.filter(n => n.data.type === "gerar");
+    if (gerarNodes.length === 0) {
+      alert("Adicione pelo menos um bloco Gerar ao canvas!");
+      return;
+    }
+
+    for (const gerarNode of gerarNodes) {
+      // Busca os blocos conectados a este Gerar
+      const connectedEdges = edges.filter(e => e.target === gerarNode.id);
+      let avatarId = "";
+      let script = "";
+      let voiceId = "en-US-JennyNeural";
+      let bgColor = "#ffffff";
+
+      for (const edge of connectedEdges) {
+        const sourceNode = nodes.find(n => n.id === edge.source);
+        if (!sourceNode) continue;
+        if (sourceNode.data.type === "copy") {
+          script = (sourceNode.data.script as string) || "";
+        }
+        if (sourceNode.data.type === "avatar") {
+          avatarId = (sourceNode.data.avatarId as string) || "";
+        }
+        if (sourceNode.data.type === "cenario") {
+          bgColor = (sourceNode.data.bgColor as string) || "#ffffff";
+        }
+        // Busca indiretamente via avatar -> produto
+        const indirectEdges = edges.filter(e => e.target === sourceNode.id);
+        for (const ie of indirectEdges) {
+          const upstreamNode = nodes.find(n => n.id === ie.source);
+          if (!upstreamNode) continue;
+          if (upstreamNode.data.type === "avatar") avatarId = (upstreamNode.data.avatarId as string) || "";
+          if (upstreamNode.data.type === "copy") script = (upstreamNode.data.script as string) || "";
+        }
+      }
+
+      if (!avatarId || !script) {
+        alert(`Bloco Gerar precisa estar conectado a um Avatar e uma Copy com script!`);
+        continue;
+      }
+
+      // Marca como gerando
+      setNodes(nds => nds.map(n => n.id === gerarNode.id
+        ? { ...n, data: { ...n.data, status: "generating", progress: 10 } }
+        : n
+      ));
+
+      try {
+        // Chama HeyGen para gerar vídeo
+        const res = await fetch(`${API}/heygen/generate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            avatar_id: avatarId,
+            script,
+            voice_id: voiceId,
+            background_color: bgColor,
+            width: (gerarNode.data.format as string) === "16:9" ? 1920 : 1080,
+            height: (gerarNode.data.format as string) === "16:9" ? 1080 : 1920,
+          }),
+        });
+
+        if (!res.ok) throw new Error("Erro ao iniciar geração");
+        const data = await res.json();
+        const videoId = data.video_id;
+
+        setNodes(nds => nds.map(n => n.id === gerarNode.id
+          ? { ...n, data: { ...n.data, status: "generating", progress: 30, videoId } }
+          : n
+        ));
+
+        // Polling do status
+        let attempts = 0;
+        const poll = setInterval(async () => {
+          attempts++;
+          try {
+            const statusRes = await fetch(`${API}/heygen/status/${videoId}`);
+            const statusData = await statusRes.json();
+
+            const progress = Math.min(30 + attempts * 5, 90);
+            setNodes(nds => nds.map(n => n.id === gerarNode.id
+              ? { ...n, data: { ...n.data, progress } }
+              : n
+            ));
+
+            if (statusData.status === "completed") {
+              clearInterval(poll);
+              setNodes(nds => nds.map(n => n.id === gerarNode.id
+                ? { ...n, data: { ...n.data, status: "done", progress: 100, videoUrl: statusData.video_url } }
+                : n
+              ));
+            } else if (statusData.status === "failed" || attempts > 60) {
+              clearInterval(poll);
+              setNodes(nds => nds.map(n => n.id === gerarNode.id
+                ? { ...n, data: { ...n.data, status: "idle", progress: 0 } }
+                : n
+              ));
+              alert("Falha na geração do vídeo. Tente novamente.");
+            }
+          } catch { clearInterval(poll); }
+        }, 5000);
+
+      } catch (e) {
+        setNodes(nds => nds.map(n => n.id === gerarNode.id
+          ? { ...n, data: { ...n.data, status: "idle", progress: 0 } }
+          : n
+        ));
+        alert("Erro ao gerar vídeo. Verifique as conexões dos blocos.");
+      }
+    }
+  }
+
     ...n,
     data: {
       ...n.data,
@@ -883,7 +1005,8 @@ export default function TikTokCanvasInner() {
           </div>
           <button type="button"
             className="flex items-center gap-2 px-4 py-2 rounded-[8px] text-sm font-semibold cursor-pointer border-none transition-all hover:opacity-90"
-            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}>
+            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}
+            onClick={handleGerarTodos}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
