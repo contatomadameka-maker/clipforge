@@ -211,7 +211,7 @@ function AvatarNode({ data, selected }: NodeProps) {
             </div>
             <div>
               <p className="text-xs font-medium text-[#f0f0f5]">{d.avatarStyle || "Avatar"}</p>
-              <p className="text-[10px] text-[#55556a]">{d.language?.toUpperCase() || "PT-BR"}</p>
+              <p className="text-[10px] text-[#55556a]">{(d as any).voiceName || d.language?.toUpperCase() || "PT-BR"}</p>
             </div>
           </div>
         ) : (
@@ -382,6 +382,38 @@ function AvatarPicker({ node, update }: { node: Node<BlockData>; update: (patch:
             ))}
           </div>
         )}
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Voz</label>
+        <div className="flex flex-col gap-1.5">
+          {[
+            { id: "6872a840c4194f42a7f8ce0aee47660c", name: "Pedro Lima", gender: "♂", style: "Friendly" },
+            { id: "22cd399317428a8151293305deceba", name: "Ana Carvalho", gender: "♀", style: "Friendly" },
+            { id: "94ec497104a04c87904a08a138d6e46c", name: "Sofia Brazil", gender: "♀", style: "Excited" },
+            { id: "6d282a9f296746568da9d65586935dba", name: "Sofia Brazil", gender: "♀", style: "Friendly" },
+            { id: "c8ac31e97555494fb8502599e6bc5461", name: "Adriano", gender: "♂", style: "Natural" },
+            { id: "3ba59d6edb54e79a40b29726a12d1c3", name: "Calm Carlos", gender: "♂", style: "Calm" },
+            { id: "4bd875d510f5461a9e228e1cbde2d545", name: "Camila", gender: "♀", style: "Friendly" },
+            { id: "dbf999472fe147be9de01004103c21ea", name: "Adriana", gender: "♀", style: "Natural" },
+          ].map(v => (
+            <button key={v.id} type="button"
+              onClick={() => update({ voiceId: v.id, voiceName: v.name } as any)}
+              className="flex items-center gap-2.5 px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none text-left"
+              style={(node.data as any).voiceId === v.id
+                ? { background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
+                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <span className="text-base">{v.gender}</span>
+              <div>
+                <p className="font-medium leading-none mb-0.5">{v.name}</p>
+                <p className="text-[10px] opacity-60">{v.style}</p>
+              </div>
+              {(node.data as any).voiceId === v.id && (
+                <span className="ml-auto text-[10px]">✓</span>
+              )}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div>
@@ -853,7 +885,8 @@ export default function TikTokCanvasInner() {
         if (sourceNode.data.type === "avatar") {
           avatarId = (sourceNode.data.avatarId as string) || "";
           const lang = (sourceNode.data.language as string) || "pt-br";
-          voiceId = VOICE_IDS[lang] || VOICE_IDS["pt-br"];
+          // Usa a voz escolhida pelo usuário, ou o padrão por idioma
+          voiceId = (sourceNode.data as any).voiceId || VOICE_IDS[lang] || VOICE_IDS["pt-br"];
         }
         if (sourceNode.data.type === "cenario") {
           bgColor = (sourceNode.data.bgColor as string) || "#ffffff";
