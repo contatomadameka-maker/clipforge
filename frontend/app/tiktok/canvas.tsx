@@ -322,7 +322,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
     try {
       const formData = new FormData();
       formData.append("file", file);
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/storage/upload/product-image`, {
+      const res = await fetch(`https://clipforge-6yzz.onrender.com/storage/upload/product-image`, {
         method: "POST",
         body: formData,
       });
@@ -344,7 +344,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
   async function generateScript() {
     setGenerating(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/copy/generate-script`, {
+      const res = await fetch(`https://clipforge-6yzz.onrender.com/copy/generate-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
