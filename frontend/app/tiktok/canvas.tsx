@@ -323,15 +323,34 @@ function ConfigPanel({ node, onUpdate, onClose }: {
 
   async function generateScript() {
     setGenerating(true);
-    await new Promise(r => setTimeout(r, 1200));
-    const scripts: Record<string, string> = {
-      "UGC unboxing": `Gente, esse ${node.data.productName || "produto"} chegou e eu precisei mostrar pra vocês! Qualidade incrível pelo preço — aprovado! Corre no link da bio! 🔥`,
-      "Review": `Testei o ${node.data.productName || "produto"} por uma semana. Qualidade 10/10, entrega rápida, preço justo. Altamente recomendo! Link na bio.`,
-      "Tutorial": `Vou te mostrar como usar o ${node.data.productName || "produto"} do jeito certo em 3 passos simples. Pegue o seu com desconto no link da bio! ✨`,
-      "Oferta relâmpago": `⚡ Só até hoje! ${node.data.productName || "Produto"} com desconto especial. Estoque limitado — link na bio agora!`,
-    };
-    update({ script: scripts[node.data.avatarStyle || ""] || `Confira o incrível ${node.data.productName || "produto"}! Link na bio! 🛍️` });
-    setGenerating(false);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/copy/generate-script`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_name: node.data.productName || "produto",
+          category: node.data.category || "Geral",
+          style: node.data.avatarStyle || "UGC unboxing",
+          tone: node.data.tone || "Animado",
+          duration: node.data.duration || "30s",
+          language: node.data.language || "pt-br",
+        }),
+      });
+      if (!res.ok) throw new Error("Erro na API");
+      const data = await res.json();
+      update({ script: data.script });
+    } catch (e) {
+      // Fallback local se backend não responder
+      const fallbacks: Record<string, string> = {
+        "UGC unboxing": `Gente, esse ${node.data.productName || "produto"} chegou e eu precisei mostrar pra vocês! Qualidade incrível — aprovado! Corre no link da bio! 🔥`,
+        "Review": `Testei o ${node.data.productName || "produto"} por uma semana. Qualidade 10/10, entrega rápida. Altamente recomendo! Link na bio.`,
+        "Tutorial": `Vou te mostrar como usar o ${node.data.productName || "produto"} em 3 passos simples. Pegue o seu no link da bio! ✨`,
+        "Oferta relâmpago": `⚡ Só até hoje! ${node.data.productName || "Produto"} com desconto especial. Estoque limitado — link na bio!`,
+      };
+      update({ script: fallbacks[node.data.avatarStyle || ""] || `Confira o incrível ${node.data.productName || "produto"}! Link na bio! 🛍️` });
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
