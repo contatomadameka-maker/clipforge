@@ -66,9 +66,12 @@ const BLOCK_CONFIG: Record<BlockType, { color: string; bg: string; icon: string;
 // ── Handle estilizado ─────────────────────────────────────────
 
 const handleStyle = {
-  width: 10, height: 10,
+  width: 14,
+  height: 14,
   background: "#7c6df5",
-  border: "2px solid #131318",
+  border: "3px solid #131318",
+  borderRadius: "50%",
+  cursor: "crosshair",
 };
 
 // ── Bloco base ────────────────────────────────────────────────
@@ -751,8 +754,16 @@ export default function TikTokCanvasInner() {
         .react-flow__controls-button svg { fill: #9090a8 !important; }
         .react-flow__edge-path { stroke-width: 2 !important; }
         .react-flow__edge:hover .react-flow__edge-path { stroke: #a99cf8 !important; stroke-width: 3 !important; cursor: pointer; }
-        .react-flow__handle { transition: transform 0.15s; }
-        .react-flow__handle:hover { transform: scale(1.4); }
+        .react-flow__handle { transition: transform 0.15s, box-shadow 0.15s; }
+        .react-flow__handle:hover { transform: scale(1.6) !important; box-shadow: 0 0 0 4px rgba(124,109,245,0.3); }
+        .react-flow__handle-right { right: -8px !important; }
+        .react-flow__handle-left { left: -8px !important; }
+        .react-flow__handle::after {
+          content: '';
+          position: absolute;
+          inset: -8px;
+          border-radius: 50%;
+        }
         /* Remove scrollbar estranho */
         .react-flow__pane::-webkit-scrollbar { display: none; }
       `}</style>
