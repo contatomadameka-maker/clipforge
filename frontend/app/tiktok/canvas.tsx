@@ -823,7 +823,7 @@ export default function TikTokCanvasInner() {
   const API = "https://clipforge-6yzz.onrender.com";
 
   const VOICE_IDS: Record<string, string> = {
-    "pt-br": "6872a840c4194f42a7f8ce8aee47660c", // Pedro Lima - Friendly
+    "pt-br": "6872a840c4194f42a7f8ce0aee47660c", // Pedro Lima - Friendly
     "en": "en-US-JennyNeural",
     "es": "es-ES-ElviraNeural",
   };
