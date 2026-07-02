@@ -792,6 +792,7 @@ export default function TikTokCanvasInner() {
             onPaneClick={() => setSelectedNodeId(null)}
             onEdgeClick={(_, edge) => setEdges(eds => eds.filter(e => e.id !== edge.id))}
             deleteKeyCode={["Backspace", "Delete"]}
+            onNodesDelete={() => {}}
             fitView
             style={{ background: "#0a0a10" }}
             defaultEdgeOptions={{ animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }}
@@ -801,8 +802,8 @@ export default function TikTokCanvasInner() {
               variant={BackgroundVariant.Cross} 
               gap={32} 
               size={1.5}
-              color="rgba(255,255,255,0.08)"
-              style={{ background: "#0a0a10" }}
+              color="rgba(200,200,220,0.15)"
+              style={{ background: "#f0f0f8" }}
             />
             <Controls style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} />
             <MiniMap style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} nodeColor={() => "#7c6df5"} />
