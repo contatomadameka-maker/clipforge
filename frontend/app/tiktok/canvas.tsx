@@ -822,6 +822,12 @@ export default function TikTokCanvasInner() {
   // Injeta onConfigure em cada node
   const API = "https://clipforge-6yzz.onrender.com";
 
+  const VOICE_IDS: Record<string, string> = {
+    "pt-br": "6872a840c4194f42a7f8ce8aee47660c", // Pedro Lima - Friendly
+    "en": "en-US-JennyNeural",
+    "es": "es-ES-ElviraNeural",
+  };
+
   async function handleGerarTodos() {
     // Encontra todos os blocos Gerar conectados
     const gerarNodes = nodes.filter(n => n.data.type === "gerar");
@@ -835,7 +841,7 @@ export default function TikTokCanvasInner() {
       const connectedEdges = edges.filter(e => e.target === gerarNode.id);
       let avatarId = "";
       let script = "";
-      let voiceId = "en-US-JennyNeural";
+      let voiceId = VOICE_IDS["pt-br"];
       let bgColor = "#ffffff";
 
       for (const edge of connectedEdges) {
@@ -846,6 +852,8 @@ export default function TikTokCanvasInner() {
         }
         if (sourceNode.data.type === "avatar") {
           avatarId = (sourceNode.data.avatarId as string) || "";
+          const lang = (sourceNode.data.language as string) || "pt-br";
+          voiceId = VOICE_IDS[lang] || VOICE_IDS["pt-br"];
         }
         if (sourceNode.data.type === "cenario") {
           bgColor = (sourceNode.data.bgColor as string) || "#ffffff";
