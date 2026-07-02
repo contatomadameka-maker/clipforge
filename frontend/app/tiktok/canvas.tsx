@@ -137,7 +137,7 @@ function ProdutoNode({ data, selected }: NodeProps) {
   return (
     <>
       <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="produto" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()}>
+      <BaseBlock type="produto" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
         {d.image ? (
           <div className="flex items-center gap-2.5">
             <img src={d.image} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" alt="" />
@@ -165,7 +165,7 @@ function CenarioNode({ data, selected }: NodeProps) {
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="cenario" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()}>
+      <BaseBlock type="cenario" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
         {d.prompt ? (
           <div>
             <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-2">{d.prompt}</p>
@@ -199,7 +199,7 @@ function AvatarNode({ data, selected }: NodeProps) {
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="avatar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()}>
+      <BaseBlock type="avatar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
         {d.avatarId ? (
           <div className="flex items-center gap-2.5">
             <div className="w-10 h-10 rounded-full flex items-center justify-center text-xl"
@@ -230,7 +230,7 @@ function CopyNode({ data, selected }: NodeProps) {
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="copy" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()}>
+      <BaseBlock type="copy" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
         {d.script ? (
           <div>
             <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-2">{d.script}</p>
@@ -260,7 +260,7 @@ function GerarNode({ data, selected }: NodeProps) {
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
-      <BaseBlock type="gerar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()}>
+      <BaseBlock type="gerar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
         {d.status === "generating" ? (
           <div>
             <div className="flex justify-between mb-1.5">
