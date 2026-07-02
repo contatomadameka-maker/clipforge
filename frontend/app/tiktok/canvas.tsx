@@ -320,9 +320,15 @@ function AvatarPicker({ node, update }: { node: Node<BlockData>; update: (patch:
   const [search, setSearch] = useState("");
 
   useEffect(() => {
-    fetch("https://clipforge-6yzz.onrender.com/heygen/avatars")
+    fetch("https://api.heygen.com/v2/avatars", {
+      headers: { "X-Api-Key": process.env.NEXT_PUBLIC_HEYGEN_API_KEY || "" },
+    })
       .then(r => r.json())
-      .then(d => { setAvatars(d.avatars || []); setLoading(false); })
+      .then(d => {
+        const list = (d?.data?.avatars || []).filter((av: any) => !av.premium);
+        setAvatars(list);
+        setLoading(false);
+      })
       .catch(() => setLoading(false));
   }, []);
 
