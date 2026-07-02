@@ -317,6 +317,26 @@ function ConfigPanel({ node, onUpdate, onClose }: {
   const fileRef = useRef<HTMLInputElement>(null);
   const [generating, setGenerating] = useState(false);
 
+  async function uploadImage(file: File) {
+    onUpdate(node.id, { uploading: true } as any);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/storage/upload/product-image`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Erro no upload");
+      const data = await res.json();
+      onUpdate(node.id, { image: data.url, imageKey: data.key, uploading: false } as any);
+    } catch {
+      // Fallback: preview local
+      const reader = new FileReader();
+      reader.onload = ev => onUpdate(node.id, { image: ev.target?.result as string, uploading: false } as any);
+      reader.readAsDataURL(file);
+    }
+  }
+
   function update(patch: Partial<BlockData>) {
     onUpdate(node.id, patch);
   }
@@ -387,9 +407,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
                   e.preventDefault();
                   const file = e.dataTransfer.files[0];
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = ev => update({ image: ev.target?.result as string });
-                  reader.readAsDataURL(file);
+                  uploadImage(file);
                 }}
                 onDragOver={e => e.preventDefault()}
                 className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all hover:border-[#7c6df5]"
@@ -401,6 +419,11 @@ function ConfigPanel({ node, onUpdate, onClose }: {
                 }}>
                 {node.data.image ? (
                   <img src={node.data.image} className="w-full h-full object-contain rounded-xl" alt="" />
+                ) : (node.data as any).uploading ? (
+                  <>
+                    <div className="w-6 h-6 border-2 border-[#7c6df5]/30 border-t-[#7c6df5] rounded-full animate-spin mb-2" />
+                    <p className="text-xs text-[#9090a8]">Enviando...</p>
+                  </>
                 ) : (
                   <>
                     <span className="text-2xl mb-1.5">📷</span>
@@ -412,9 +435,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
               <input ref={fileRef} type="file" accept="image/*" className="hidden"
                 onChange={e => {
                   const file = e.target.files?.[0]; if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = ev => update({ image: ev.target?.result as string });
-                  reader.readAsDataURL(file);
+                  uploadImage(file);
                 }} />
             </div>
             <div>
