@@ -5,7 +5,7 @@
 // Canvas visual TikTok Shop — React Flow com blocos arrastáveis
 // ─────────────────────────────────────────────────────────────
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactFlow,
   Background,
   Controls,
