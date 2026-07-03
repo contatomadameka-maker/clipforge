@@ -52,6 +52,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [notifOpen, setNotifOpen] = useState(false);
   const [userName, setUserName] = useState("Usuário");
   const [initials, setInitials] = useState("U");
+  const [credits, setCredits] = useState<number>(50);
+  const [maxCredits] = useState<number>(2000);
 
   // Carrega dados do usuário apenas no cliente
   useEffect(() => {
@@ -63,6 +65,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           const name = data.user.user_metadata?.name || data.user.email?.split("@")[0] || "Usuário";
           setUserName(name);
           setInitials(name.split(" ").map((n: string) => n[0]).join("").slice(0, 2).toUpperCase());
+
+          // Carrega créditos reais
+          fetch(`https://clipforge-6yzz.onrender.com/credits/${data.user.id}`)
+            .then(r => r.json())
+            .then(d => { if (d.balance !== undefined) setCredits(d.balance); })
+            .catch(() => {});
         }
       });
     } catch {}
@@ -124,11 +132,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             style={{ background: "#1a1a22", border: "1px solid rgba(255,255,255,0.07)" }}>
             <p className="text-[10px] text-[#55556a]">Créditos restantes</p>
             <p className="text-[15px] font-semibold text-[#f0f0f5]">
-              840 <span className="text-[12px] font-normal text-[#55556a]">/ 2.000</span>
+              {credits.toLocaleString()} <span className="text-[12px] font-normal text-[#55556a]">/ {maxCredits.toLocaleString()}</span>
             </p>
             <div className="h-[3px] rounded-full overflow-hidden mt-2"
               style={{ background: "rgba(255,255,255,0.12)" }}>
-              <div className="h-full w-[42%] rounded-full" style={{ background: "#7c6df5" }} />
+              <div className="h-full rounded-full transition-all duration-500"
+                style={{ width: `${Math.min((credits / maxCredits) * 100, 100)}%`, background: credits < 100 ? "#f87171" : "#7c6df5" }} />
             </div>
           </div>
 
@@ -202,9 +211,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </div>
         </header>
 
-       <main className="flex-1" style={{ height: "calc(100vh - 56px)", overflow: "hidden" }}>
-          {children}
-        </main>
+        <main className="flex-1">{children}</main>
       </div>
     </div>
   );
