@@ -1,49 +1,94 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/credits.py
-# Endpoints de créditos — saldo, histórico, custos por operação
+# Gerenciamento de créditos do usuário
 # ─────────────────────────────────────────────────────────────
 
-from fastapi import APIRouter, HTTPException, Depends
-from models.schemas import CreditBalanceResponse, CreditTransactionResponse
-from services.shared.credit_service import get_balance, CREDIT_COSTS
+from fastapi import APIRouter, HTTPException, Header
+from pydantic import BaseModel
 from db.database import get_supabase
-from supabase import Client
-from typing import List
+from typing import Optional
 
 router = APIRouter()
 
 
-@router.get("/balance/{user_id}", response_model=CreditBalanceResponse)
-async def credit_balance(user_id: str, db: Client = Depends(get_supabase)):
-    """Retorna o saldo atual de créditos do usuário."""
+class CreditsResponse(BaseModel):
+    balance: int
+    total_earned: int = 0
+    total_used: int = 0
+
+
+class DebitRequest(BaseModel):
+    user_id: str
+    amount: int
+    description: str
+    project_id: Optional[str] = None
+
+
+@router.get("/{user_id}", response_model=CreditsResponse)
+async def get_credits(user_id: str):
+    """Retorna o saldo de créditos do usuário."""
+    db = get_supabase()
     res = db.table("user_credits").select("*").eq("user_id", user_id).single().execute()
+
+    if not res.data:
+        # Cria o registro se não existir
+        db.table("user_credits").insert({
+            "user_id": user_id,
+            "balance": 50,
+        }).execute()
+        return CreditsResponse(balance=50)
+
+    return CreditsResponse(balance=res.data.get("balance", 0))
+
+
+@router.post("/debit")
+async def debit_credits(req: DebitRequest):
+    """Debita créditos do usuário."""
+    db = get_supabase()
+
+    # Verifica saldo
+    res = db.table("user_credits").select("balance").eq("user_id", req.user_id).single().execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
-    return res.data
+
+    balance = res.data.get("balance", 0)
+    if balance < req.amount:
+        raise HTTPException(status_code=402, detail=f"Créditos insuficientes. Saldo: {balance}, necessário: {req.amount}")
+
+    # Debita
+    new_balance = balance - req.amount
+    db.table("user_credits").update({"balance": new_balance}).eq("user_id", req.user_id).execute()
+
+    # Registra transação
+    db.table("credit_transactions").insert({
+        "user_id": req.user_id,
+        "amount": -req.amount,
+        "type": "debit",
+        "description": req.description,
+        "project_id": req.project_id,
+    }).execute()
+
+    return {"balance": new_balance, "debited": req.amount}
 
 
-@router.get("/transactions/{user_id}", response_model=List[CreditTransactionResponse])
-async def credit_transactions(
-    user_id: str,
-    limit: int = 20,
-    db: Client = Depends(get_supabase),
-):
-    """Retorna o histórico de transações de crédito do usuário."""
-    res = (
-        db.table("credit_transactions")
-        .select("*")
-        .eq("user_id", user_id)
-        .order("created_at", desc=True)
-        .limit(limit)
-        .execute()
-    )
-    return res.data or []
+@router.post("/refund")
+async def refund_credits(req: DebitRequest):
+    """Estorna créditos ao usuário."""
+    db = get_supabase()
 
+    res = db.table("user_credits").select("balance").eq("user_id", req.user_id).single().execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Usuário não encontrado")
 
-@router.get("/costs")
-async def credit_costs():
-    """Retorna a tabela de custos por operação (pública)."""
-    return {
-        "costs": CREDIT_COSTS,
-        "currency": "credits",
-    }
+    balance = res.data.get("balance", 0)
+    new_balance = balance + req.amount
+
+    db.table("user_credits").update({"balance": new_balance}).eq("user_id", req.user_id).execute()
+    db.table("credit_transactions").insert({
+        "user_id": req.user_id,
+        "amount": req.amount,
+        "type": "refund",
+        "description": req.description,
+    }).execute()
+
+    return {"balance": new_balance, "refunded": req.amount}
