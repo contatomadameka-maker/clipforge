@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, credits, studio, websocket, copy, storage, heygen, cenario
+from routers import stripe_router
 
 app = FastAPI(title="ClipForge API", version="1.0.0")
 
@@ -22,6 +23,7 @@ app.include_router(copy.router, prefix="/copy", tags=["Copy"])
 app.include_router(storage.router, prefix="/storage", tags=["Storage"])
 app.include_router(heygen.router, prefix="/heygen", tags=["HeyGen"])
 app.include_router(cenario.router, prefix="/cenario", tags=["Cenário"])
+app.include_router(stripe_router.router, prefix="/stripe", tags=["Stripe"])
 
 @app.get("/health")
 async def health():
