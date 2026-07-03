@@ -1088,14 +1088,23 @@ export default function TikTokCanvasInner() {
       <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 z-50"
         style={{ background: "rgba(11,11,17,0.99)", borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
         <div className="flex items-center gap-3">
+          {/* Botão voltar */}
+          <a href="/dashboard"
+            className="w-7 h-7 rounded-lg flex items-center justify-center no-underline transition-all hover:opacity-80"
+            style={{ background: "rgba(255,255,255,0.08)", border: "0.5px solid rgba(255,255,255,0.1)" }}
+            title="Voltar ao Dashboard">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+          </a>
           <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 12a4 4 0 100 8 4 4 0 000-8zM15 2v10M15 2a4 4 0 004 4"/>
+              <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
             </svg>
           </div>
           <div>
-            <p className="text-sm font-bold text-[#f0f0f5]">Canvas TikTok Shop</p>
-            <p className="text-[10px] text-[#55556a]">Arraste blocos e conecte para criar seus vídeos</p>
+            <p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p>
+            <p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram · YouTube Shorts</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
