@@ -325,6 +325,35 @@ function AvatarPicker({ node, update }: { node: Node<BlockData>; update: (patch:
   const [avatars, setAvatars] = useState<HeyGenAvatar[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const VOICES = [
+    { id: "6872a840c4194f42a7f8ce0aee47660c", name: "Pedro Lima", gender: "♂", style: "Friendly", preview: "https://resource.heygen.ai/text_to_speech/tr6HZYtX9AGBdhd2EL9Un.mp3" },
+    { id: "22cd399317428a8151293305deceba", name: "Ana Carvalho", gender: "♀", style: "Friendly", preview: "https://resource2.heygen.ai/text_to_speech/21e28514b7994f46b907b74914a3ca6e/6c0a95599317428a8151293305deceba/id=4df9deb9-463b-45ec-9640-00935f7bddd6.wav" },
+    { id: "94ec497104a04c87904a08a138d6e46c", name: "Sofia Brazil", gender: "♀", style: "Excited", preview: "https://resource.heygen.ai/text_to_speech/ZS5fa8Hoy3vNvwMyE47P99.mp3" },
+    { id: "c8ac31e97555494fb8502599e6bc5461", name: "Adriano", gender: "♂", style: "Natural", preview: "https://resource2.heygen.ai/text_to_speech/21e28514b7994f46b907b74914a3ca6e/c8ac31e97555494fb8502599e6bc5461/id=edbd73ae-984b-4ac5-bb44-e8c3741b795f.wav" },
+    { id: "3ba59d6edb54e79a40b29726a12d1c3", name: "Calm Carlos", gender: "♂", style: "Calm", preview: "https://resource.heygen.ai/text_to_speech/GgYMC4u6kghazVTJuJJFjB.mp3" },
+    { id: "4bd875d510f5461a9e228e1cbde2d545", name: "Camila", gender: "♀", style: "Friendly", preview: "https://static.heygen.ai/voice_preview/a0fbec40f1844a78801f5577b2730fb0.wav" },
+    { id: "dbf999472fe147be9de01004103c21ea", name: "Adriana", gender: "♀", style: "Natural", preview: "https://static.heygen.ai/voice_preview/56f9ef0f038c4bc28a21ffc254bec715.wav" },
+    { id: "a53be0a403ce4ae586f002ba0c125b2c", name: "Paulo", gender: "♂", style: "Natural", preview: "https://static.heygen.ai/voice_preview/226e2c7b85b2489e8dd15750dfa7e7a1.wav" },
+  ];
+
+  function playPreview(voiceId: string, previewUrl: string) {
+    if (playingVoice === voiceId) {
+      audioRef.current?.pause();
+      setPlayingVoice(null);
+      return;
+    }
+    if (audioRef.current) {
+      audioRef.current.pause();
+    }
+    const audio = new Audio(previewUrl);
+    audioRef.current = audio;
+    audio.play().catch(() => {});
+    audio.onended = () => setPlayingVoice(null);
+    setPlayingVoice(voiceId);
+  }
 
   useEffect(() => {
     fetch("https://api.heygen.com/v2/avatars", {
@@ -385,33 +414,46 @@ function AvatarPicker({ node, update }: { node: Node<BlockData>; update: (patch:
       </div>
 
       <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Voz</label>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Voz <span className="text-[10px] text-[#55556a]">— clique ▶ para ouvir</span></label>
         <div className="flex flex-col gap-1.5">
-          {[
-            { id: "6872a840c4194f42a7f8ce0aee47660c", name: "Pedro Lima", gender: "♂", style: "Friendly" },
-            { id: "22cd399317428a8151293305deceba", name: "Ana Carvalho", gender: "♀", style: "Friendly" },
-            { id: "94ec497104a04c87904a08a138d6e46c", name: "Sofia Brazil", gender: "♀", style: "Excited" },
-            { id: "6d282a9f296746568da9d65586935dba", name: "Sofia Brazil", gender: "♀", style: "Friendly" },
-            { id: "c8ac31e97555494fb8502599e6bc5461", name: "Adriano", gender: "♂", style: "Natural" },
-            { id: "3ba59d6edb54e79a40b29726a12d1c3", name: "Calm Carlos", gender: "♂", style: "Calm" },
-            { id: "4bd875d510f5461a9e228e1cbde2d545", name: "Camila", gender: "♀", style: "Friendly" },
-            { id: "dbf999472fe147be9de01004103c21ea", name: "Adriana", gender: "♀", style: "Natural" },
-          ].map(v => (
-            <button key={v.id} type="button"
-              onClick={() => update({ voiceId: v.id, voiceName: v.name } as any)}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none text-left"
+          {VOICES.map(v => (
+            <div key={v.id}
+              className="flex items-center gap-2 px-3 py-2 rounded-[8px] cursor-pointer transition-all"
               style={(node.data as any).voiceId === v.id
-                ? { background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
-                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              <span className="text-base">{v.gender}</span>
-              <div>
-                <p className="font-medium leading-none mb-0.5">{v.name}</p>
-                <p className="text-[10px] opacity-60">{v.style}</p>
+                ? { background: "rgba(62,207,142,0.1)", border: "0.5px solid rgba(62,207,142,0.3)" }
+                : { background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}
+              onClick={() => update({ voiceId: v.id, voiceName: v.name } as any)}>
+              <span className="text-sm flex-shrink-0">{v.gender}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-medium leading-none mb-0.5"
+                  style={{ color: (node.data as any).voiceId === v.id ? "#3ecf8e" : "#f0f0f5" }}>
+                  {v.name}
+                </p>
+                <p className="text-[10px] text-[#55556a]">{v.style}</p>
               </div>
               {(node.data as any).voiceId === v.id && (
-                <span className="ml-auto text-[10px]">✓</span>
+                <span className="text-[10px] text-[#3ecf8e] flex-shrink-0">✓</span>
               )}
-            </button>
+              <button
+                type="button"
+                onClick={e => { e.stopPropagation(); playPreview(v.id, v.preview); }}
+                className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 border-none cursor-pointer transition-all"
+                style={{
+                  background: playingVoice === v.id ? "rgba(62,207,142,0.2)" : "rgba(124,109,245,0.15)",
+                  border: `0.5px solid ${playingVoice === v.id ? "rgba(62,207,142,0.4)" : "rgba(124,109,245,0.3)"}`,
+                }}
+                title="Ouvir preview">
+                {playingVoice === v.id ? (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="#3ecf8e">
+                    <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
+                  </svg>
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="#a99cf8">
+                    <path d="M5 3l14 9-14 9V3z"/>
+                  </svg>
+                )}
+              </button>
+            </div>
           ))}
         </div>
       </div>
