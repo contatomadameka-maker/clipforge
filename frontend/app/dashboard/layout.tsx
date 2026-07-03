@@ -15,7 +15,7 @@ const navItems = [
 
 const createItems = [
   { href: "/studio", label: "Studio — YouTube", icon: "M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z M21 12a9 9 0 11-18 0 9 9 0 0118 0z" },
-  { href: "/tiktok", label: "TikTok Shop", icon: "M9 12a4 4 0 100 8 4 4 0 000-8zM15 2v10M15 2a4 4 0 004 4" },
+  { href: "/tiktok", label: "Criativo de Produto", icon: "M9 12a4 4 0 100 8 4 4 0 000-8zM15 2v10M15 2a4 4 0 004 4" },
   { href: "/dashboard/templates", label: "Templates", icon: "M3 3h18v4H3zM3 9h18v4H3zM3 15h18v4H3z" },
 ];
 
