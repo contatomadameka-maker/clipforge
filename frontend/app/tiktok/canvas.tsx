@@ -816,8 +816,25 @@ export default function TikTokCanvasInner() {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [rfInstance, setRfInstance] = useState<any>(null);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [userCredits, setUserCredits] = useState<number>(50);
+
+  useEffect(() => {
+    try {
+      const sb = (window as any).__supabase;
+      if (sb) {
+        sb.auth.getUser().then(({ data }: any) => {
+          if (data?.user) {
+            fetch(`https://clipforge-6yzz.onrender.com/credits/${data.user.id}`)
+              .then(r => r.json())
+              .then(d => { if (d.balance !== undefined) setUserCredits(d.balance); })
+              .catch(() => {});
+          }
+        });
+      }
+    } catch {}
+  }, []);
 
   const onConnect = useCallback(
     (params: Connection) => setEdges(eds => addEdge({ ...params, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds)),
@@ -1043,7 +1060,7 @@ export default function TikTokCanvasInner() {
           <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg"
             style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            <span className="font-semibold text-[#f0f0f5]">840</span> créditos
+            <span className="font-semibold text-[#f0f0f5]">{userCredits.toLocaleString()}</span> créditos
           </div>
           <button type="button"
             className="flex items-center gap-2 px-4 py-2 rounded-[8px] text-sm font-semibold cursor-pointer border-none transition-all hover:opacity-90"
