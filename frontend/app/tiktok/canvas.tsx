@@ -919,13 +919,52 @@ export default function TikTokCanvasInner() {
     "es": "es-ES-ElviraNeural",
   };
 
+  const [creditModal, setCreditModal] = useState<{ needed: number; have: number } | null>(null);
+
+  const CREDIT_COST: Record<string, number> = {
+    "15s": 8, "30s": 15, "45s": 20, "60s": 25,
+  };
+
   async function handleGerarTodos() {
-    // Encontra todos os blocos Gerar conectados
+    // Encontra blocos Gerar no canvas
     const gerarNodes = nodes.filter(n => n.data.type === "gerar");
     if (gerarNodes.length === 0) {
       alert("Adicione pelo menos um bloco Gerar ao canvas!");
       return;
     }
+
+    // Calcula créditos necessários
+    let totalCredits = 0;
+    for (const gerarNode of gerarNodes) {
+      const connectedEdges = edges.filter(e => e.target === gerarNode.id);
+      let duration = "30s";
+      for (const edge of connectedEdges) {
+        const source = nodes.find(n => n.id === edge.source);
+        if (source?.data.type === "copy" && source.data.duration) {
+          duration = source.data.duration as string;
+        }
+        const indirect = edges.filter(e => e.target === source?.id);
+        for (const ie of indirect) {
+          const up = nodes.find(n => n.id === ie.source);
+          if (up?.data.type === "copy" && up.data.duration) {
+            duration = up.data.duration as string;
+          }
+        }
+      }
+      totalCredits += CREDIT_COST[duration] || 15;
+    }
+
+    // Verifica saldo
+    if (totalCredits > userCredits) {
+      setCreditModal({ needed: totalCredits, have: userCredits });
+      return;
+    }
+
+    // Confirma antes de gerar
+    const confirmed = window.confirm(
+      `Gerar ${gerarNodes.length} vídeo${gerarNodes.length > 1 ? "s" : ""}?\n\nCusto: ${totalCredits} créditos\nSaldo atual: ${userCredits} créditos\nSaldo após: ${userCredits - totalCredits} créditos`
+    );
+    if (!confirmed) return;
 
     for (const gerarNode of gerarNodes) {
       // Busca os blocos conectados a este Gerar
@@ -1124,6 +1163,58 @@ export default function TikTokCanvasInner() {
           </button>
         </div>
       </div>
+
+      {/* Modal de créditos insuficientes */}
+      {creditModal && (
+        <div className="absolute inset-0 flex items-center justify-center z-50"
+          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4"
+            style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }}>
+
+            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
+              style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.25)" }}>
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </div>
+
+            <h3 className="text-[17px] font-bold text-[#f0f0f5] text-center mb-2">Créditos insuficientes</h3>
+            <p className="text-[13px] text-[#9090a8] text-center leading-relaxed mb-5">
+              Seus vídeos precisam de <strong className="text-[#f87171]">{creditModal.needed} créditos</strong> mas você tem apenas <strong className="text-[#f0f0f5]">{creditModal.have} créditos</strong> disponíveis.
+            </p>
+
+            <div className="rounded-[10px] p-4 mb-5" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <div className="flex justify-between text-[12px] mb-2">
+                <span className="text-[#55556a]">Necessário</span>
+                <span className="text-[#f87171] font-semibold">{creditModal.needed} créditos</span>
+              </div>
+              <div className="flex justify-between text-[12px] mb-2">
+                <span className="text-[#55556a]">Disponível</span>
+                <span className="text-[#f0f0f5] font-semibold">{creditModal.have} créditos</span>
+              </div>
+              <div className="h-px my-2" style={{ background: "rgba(255,255,255,0.07)" }} />
+              <div className="flex justify-between text-[12px]">
+                <span className="text-[#55556a]">Faltam</span>
+                <span className="text-[#f87171] font-bold">{creditModal.needed - creditModal.have} créditos</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <a href="/dashboard/settings"
+                className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 no-underline"
+                style={{ background: "#7c6df5", color: "#fff" }}>
+                ⚡ Ver planos e adicionar créditos
+              </a>
+              <button type="button"
+                onClick={() => setCreditModal(null)}
+                className="w-full h-10 rounded-[10px] text-sm cursor-pointer border-none"
+                style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Canvas area */}
       <div className="flex-1 relative overflow-hidden" ref={reactFlowWrapper}
