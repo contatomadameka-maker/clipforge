@@ -214,7 +214,7 @@ export default function DashboardPage() {
             </div>
           </Link>
 
-          {/* TikTok card */}
+          {/* Criativo de Produto card */}
           <Link
             href="/tiktok"
             className="group relative bg-surface border border-green-border rounded-[14px] p-6 flex flex-col gap-4 hover:border-green hover:bg-green-dim transition-all duration-150 overflow-hidden"
@@ -223,19 +223,19 @@ export default function DashboardPage() {
             <div className="flex items-start gap-4">
               <div className="w-11 h-11 rounded-[11px] bg-green-dim flex items-center justify-center flex-shrink-0">
                 <svg className="w-5 h-5 stroke-green fill-none stroke-[1.75]" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M9 12a4 4 0 100 8 4 4 0 000-8z" />
-                  <path d="M15 2v10M15 2a4 4 0 004 4" />
+                  <rect x="2" y="3" width="20" height="14" rx="2"/>
+                  <path d="M8 21h8M12 17v4"/>
                 </svg>
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-green mb-1">
-                  TikTok Shop
+                  Criativo de Produto
                 </p>
                 <h2 className="font-tight text-[17px] font-bold text-text tracking-tight mb-1">
-                  Vídeo de produto
+                  Vídeo com avatar falante
                 </h2>
                 <p className="text-[12px] text-text-2 leading-relaxed">
-                  Foto do produto → avatar falante → vídeo de vendas em 9:16. Pronto para publicar no TikTok.
+                  Foto do produto → avatar → script → vídeo pronto. Para TikTok, Facebook Ads, Kwai e mais.
                 </p>
               </div>
             </div>
