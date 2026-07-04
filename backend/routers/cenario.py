@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/cenario.py
-# Geração de cenário/fundo via Kling AI (text-to-image)
+# Geração de cenário via Kling AI (text-to-image)
 # ─────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException
@@ -8,6 +8,8 @@ from pydantic import BaseModel
 from config import get_settings
 import httpx
 import asyncio
+import jwt
+import time
 
 router = APIRouter()
 settings = get_settings()
@@ -15,50 +17,86 @@ settings = get_settings()
 KLING_API_URL = "https://api.klingai.com"
 
 
+def get_kling_token() -> str:
+    """Gera JWT token para autenticação no Kling AI."""
+    # A key do Kling tem formato: AccessKeyID:AccessKeySecret
+    parts = settings.kling_api_key.split(":")
+    if len(parts) == 2:
+        access_key_id, access_key_secret = parts
+    else:
+        # Se não tiver ":", usa a key diretamente como Bearer
+        return settings.kling_api_key
+
+    now = int(time.time())
+    payload = {
+        "iss": access_key_id,
+        "exp": now + 1800,  # 30 min
+        "nbf": now - 5,
+    }
+    token = jwt.encode(payload, access_key_secret, algorithm="HS256")
+    return token
+
+
 class GenerateCenarioRequest(BaseModel):
     prompt: str
-    negative_prompt: str = "blurry, low quality, watermark, text, people, person, human"
-    width: int = 1080
-    height: int = 1920
-    bg_color: str = "#ffffff"
+    negative_prompt: str = "people, person, human, text, watermark, blurry, low quality"
+    aspect_ratio: str = "9:16"  # Para vídeo vertical TikTok
+    style: str = "photography"  # photography, anime, digital_art
 
 
-class GenerateCenarioResponse(BaseModel):
-    task_id: str
-    status: str
-
-
-class CenarioStatusResponse(BaseModel):
+class CenarioResponse(BaseModel):
     task_id: str
     status: str
     image_url: str = ""
     error: str = ""
 
 
-@router.post("/generate", response_model=GenerateCenarioResponse)
+PROMPT_TEMPLATES = {
+    "estudio": "Professional product photography studio, clean white background, soft natural lighting, minimalist aesthetic, high-end commercial photography",
+    "lifestyle_urbano": "Modern urban lifestyle background, city street during golden hour, bokeh effect, professional photography",
+    "praia": "Tropical beach sunset background, golden hour lighting, warm tones, professional photography, no people",
+    "corporativo": "Modern corporate office background, clean desk, professional environment, soft lighting",
+    "aesthetic": "Aesthetic pastel room background, soft pink and beige tones, minimalist decor, cozy atmosphere",
+    "natureza": "Beautiful nature background, lush green forest, soft sunlight filtering through trees, serene atmosphere",
+}
+
+
+@router.get("/templates")
+async def get_templates():
+    """Retorna prompts pré-definidos de cenários."""
+    return {"templates": [
+        {"id": k, "label": v.split(",")[0].strip(), "prompt": v}
+        for k, v in PROMPT_TEMPLATES.items()
+    ]}
+
+
+@router.post("/generate", response_model=CenarioResponse)
 async def generate_cenario(req: GenerateCenarioRequest):
-    """Gera imagem de fundo/cenário via Kling AI."""
+    """Gera imagem de cenário via Kling AI e aguarda o resultado."""
 
-    # Enriquece o prompt para cenário de produto
-    enriched_prompt = f"{req.prompt}, professional product photography background, high quality, 4K, cinematic lighting, no people, clean background"
+    # Enriquece o prompt para cenário profissional de produto
+    enriched_prompt = f"{req.prompt}, professional product video background, high quality, 4K, cinematic, no people, no text"
 
-    payload = {
-        "model_name": "kling-v1",
-        "prompt": enriched_prompt,
-        "negative_prompt": req.negative_prompt,
-        "image_count": 1,
-        "image_ratio": "9:16",
+    headers = {
+        "Authorization": f"Bearer {get_kling_token()}",
+        "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient() as client:
+    payload = {
+        "model_name": "kling-v1-5",
+        "prompt": enriched_prompt,
+        "negative_prompt": req.negative_prompt,
+        "n": 1,
+        "aspect_ratio": req.aspect_ratio,
+        "image_fidelity": 0.5,
+    }
+
+    async with httpx.AsyncClient(timeout=120) as client:
+        # Inicia geração
         res = await client.post(
             f"{KLING_API_URL}/v1/images/generations",
-            headers={
-                "Authorization": f"Bearer {settings.kling_api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
             json=payload,
-            timeout=60,
         )
 
         if res.status_code != 200:
@@ -73,49 +111,35 @@ async def generate_cenario(req: GenerateCenarioRequest):
         if not task_id:
             raise HTTPException(status_code=500, detail="Kling não retornou task_id")
 
-        return GenerateCenarioResponse(task_id=task_id, status="processing")
+        # Polling até completar (max 90s)
+        for attempt in range(18):
+            await asyncio.sleep(5)
 
+            status_res = await client.get(
+                f"{KLING_API_URL}/v1/images/generations/{task_id}",
+                headers=headers,
+            )
 
-@router.get("/status/{task_id}", response_model=CenarioStatusResponse)
-async def get_cenario_status(task_id: str):
-    """Verifica o status da geração do cenário."""
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            f"{KLING_API_URL}/v1/images/generations/{task_id}",
-            headers={"Authorization": f"Bearer {settings.kling_api_key}"},
-            timeout=30,
-        )
+            if status_res.status_code != 200:
+                continue
 
-        if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail="Erro ao verificar status")
+            status_data = status_res.json().get("data", {})
+            task_status = status_data.get("task_status", "processing")
 
-        data = res.json().get("data", {})
-        status = data.get("task_status", "processing")
-        images = data.get("task_result", {}).get("images", [])
-        image_url = images[0].get("url", "") if images else ""
+            if task_status == "succeed":
+                images = status_data.get("task_result", {}).get("images", [])
+                image_url = images[0].get("url", "") if images else ""
 
-        return CenarioStatusResponse(
-            task_id=task_id,
-            status=status,
-            image_url=image_url,
-        )
+                if not image_url:
+                    raise HTTPException(status_code=500, detail="Imagem não gerada")
 
+                return CenarioResponse(
+                    task_id=task_id,
+                    status="done",
+                    image_url=image_url,
+                )
 
-@router.post("/generate-and-wait")
-async def generate_and_wait(req: GenerateCenarioRequest):
-    """Gera cenário e aguarda conclusão (max 120s)."""
+            elif task_status == "failed":
+                raise HTTPException(status_code=500, detail="Kling falhou ao gerar imagem")
 
-    # Inicia geração
-    gen = await generate_cenario(req)
-    task_id = gen.task_id
-
-    # Polling até completar
-    for _ in range(24):  # 24 x 5s = 120s max
-        await asyncio.sleep(5)
-        status = await get_cenario_status(task_id)
-        if status.status == "succeed":
-            return status
-        if status.status == "failed":
-            raise HTTPException(status_code=500, detail="Geração do cenário falhou")
-
-    raise HTTPException(status_code=408, detail="Timeout aguardando cenário")
+        raise HTTPException(status_code=408, detail="Timeout aguardando cenário (90s)")
