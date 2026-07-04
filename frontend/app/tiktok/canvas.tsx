@@ -38,6 +38,8 @@ interface BlockData extends Record<string, unknown> {
   // cenario
   prompt?: string;
   bgColor?: string;
+  cenarioImageUrl?: string;
+  cenarioStatus?: "idle" | "generating" | "done" | "error";
   // avatar
   avatarId?: string;
   avatarStyle?: string;
@@ -169,15 +171,23 @@ function CenarioNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
       <BaseBlock type="cenario" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.prompt ? (
+        {d.cenarioImageUrl ? (
+          <div className="relative rounded-lg overflow-hidden" style={{ height: "80px" }}>
+            <img src={d.cenarioImageUrl} className="w-full h-full object-cover" alt="Cenário" />
+            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-medium"
+              style={{ background: "rgba(62,207,142,0.9)", color: "#fff" }}>
+              ✓ Pronto
+            </div>
+          </div>
+        ) : d.cenarioStatus === "generating" ? (
+          <div className="flex flex-col items-center py-3 gap-2">
+            <div className="w-5 h-5 border-2 border-[#f59e0b]/30 border-t-[#f59e0b] rounded-full animate-spin" />
+            <p className="text-[10px] text-[#9090a8]">Gerando cenário...</p>
+          </div>
+        ) : d.prompt ? (
           <div>
             <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-2">{d.prompt}</p>
-            {d.bgColor && (
-              <div className="flex items-center gap-1.5 mt-2">
-                <div className="w-4 h-4 rounded-full border border-white/20" style={{ background: d.bgColor }} />
-                <span className="text-[10px] text-[#55556a]">Cor de fundo</span>
-              </div>
-            )}
+            <p className="text-[10px] text-[#55556a] mt-1">Duplo clique para gerar</p>
           </div>
         ) : (
           <div className="flex flex-col items-center py-3 gap-1.5">
@@ -311,6 +321,142 @@ const nodeTypes = {
   copy: CopyNode,
   gerar: GerarNode,
 };
+
+// ── Cenário Picker com geração via Kling AI ──────────────────
+
+function CenarioPicker({ node, update, onUpdate }: {
+  node: Node<BlockData>;
+  update: (patch: Partial<BlockData>) => void;
+  onUpdate: (id: string, data: Partial<BlockData>) => void;
+}) {
+  const [generating, setGenerating] = useState(false);
+
+  const TEMPLATES = [
+    { label: "🏢 Estúdio clean", prompt: "Professional photography studio, clean white background, soft natural lighting, minimalist aesthetic" },
+    { label: "🌆 Lifestyle urbano", prompt: "Modern urban lifestyle background, city street during golden hour, bokeh effect, no people" },
+    { label: "🏖️ Praia tropical", prompt: "Tropical beach sunset background, golden hour warm tones, palm trees, serene atmosphere, no people" },
+    { label: "💼 Corporativo", prompt: "Modern corporate office background, clean desk setup, professional environment, soft lighting, no people" },
+    { label: "🌸 Aesthetic", prompt: "Aesthetic pastel room background, soft pink and beige tones, minimalist decor, cozy atmosphere" },
+    { label: "🌿 Natureza", prompt: "Beautiful nature background, lush green forest, soft sunlight filtering through leaves, serene, no people" },
+    { label: "🛒 Shopping", prompt: "Modern shopping mall interior, bright lighting, clean floors, luxury retail atmosphere, no people" },
+    { label: "🎨 Studio criativo", prompt: "Creative studio background, artistic workspace, colorful accents, modern design, no people" },
+  ];
+
+  async function handleGenerate() {
+    if (!node.data.prompt) {
+      alert("Digite um prompt para o cenário antes de gerar!");
+      return;
+    }
+    setGenerating(true);
+    onUpdate(node.id, { cenarioStatus: "generating" } as any);
+
+    try {
+      const res = await fetch("https://clipforge-6yzz.onrender.com/cenario/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: node.data.prompt,
+          aspect_ratio: "9:16",
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Erro ao gerar cenário");
+      }
+
+      const data = await res.json();
+      onUpdate(node.id, {
+        cenarioImageUrl: data.image_url,
+        cenarioStatus: "done",
+      } as any);
+
+    } catch (e: any) {
+      onUpdate(node.id, { cenarioStatus: "error" } as any);
+      alert(`Erro: ${e.message}`);
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+
+      {/* Preview se já gerou */}
+      {(node.data as any).cenarioImageUrl && (
+        <div>
+          <label className="text-xs font-medium text-[#9090a8] block mb-2">Cenário gerado</label>
+          <div className="relative rounded-xl overflow-hidden" style={{ height: "140px" }}>
+            <img src={(node.data as any).cenarioImageUrl} className="w-full h-full object-cover" alt="Cenário" />
+            <button type="button"
+              onClick={() => onUpdate(node.id, { cenarioImageUrl: "", cenarioStatus: "idle" } as any)}
+              className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center border-none cursor-pointer text-xs"
+              style={{ background: "rgba(0,0,0,0.7)", color: "#fff" }}>
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Templates */}
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Templates rápidos</label>
+        <div className="grid grid-cols-2 gap-1.5">
+          {TEMPLATES.map(t => (
+            <button key={t.label} type="button"
+              onClick={() => update({ prompt: t.prompt })}
+              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none transition-all"
+              style={node.data.prompt === t.prompt
+                ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" }
+                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Prompt personalizado */}
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
+          Prompt personalizado
+        </label>
+        <textarea
+          value={node.data.prompt || ""}
+          onChange={e => update({ prompt: e.target.value })}
+          placeholder="Descreva o cenário em inglês para melhores resultados. Ex: Professional studio with soft lighting, white background..."
+          rows={4}
+          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }}
+        />
+        <p className="text-[10px] text-[#55556a] mt-1">Dica: prompts em inglês geram melhores resultados no Kling AI</p>
+      </div>
+
+      {/* Botão gerar */}
+      <button type="button"
+        onClick={handleGenerate}
+        disabled={generating || !(node.data as any).prompt}
+        className="h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer border-none transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+        style={{ background: "linear-gradient(135deg, #f59e0b, #d97706)", color: "#fff", boxShadow: "0 4px 14px rgba(245,158,11,0.3)" }}>
+        {generating ? (
+          <>
+            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Gerando cenário... (~30s)
+          </>
+        ) : (
+          <>
+            🎬 Gerar cenário com IA
+          </>
+        )}
+      </button>
+
+      {generating && (
+        <p className="text-[11px] text-[#9090a8] text-center">
+          O Kling AI está criando seu cenário. Pode levar até 90 segundos.
+        </p>
+      )}
+    </div>
+  );
+}
 
 // ── Avatar Picker com avatares reais do HeyGen ───────────────
 
@@ -652,44 +798,7 @@ function ConfigPanel({ node, onUpdate, onClose }: {
 
         {/* ── CENÁRIO ── */}
         {type === "cenario" && (
-          <>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Prompt do cenário</label>
-              <textarea value={node.data.prompt || ""} onChange={e => update({ prompt: e.target.value })}
-                placeholder="Descreva o cenário que a IA vai gerar. Ex: Estúdio moderno com luz natural, fundo branco clean, atmosfera profissional..."
-                rows={5}
-                className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
-                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Sugestões rápidas</label>
-              <div className="flex flex-col gap-1.5">
-                {[
-                  "Estúdio minimalista com fundo branco e luz suave",
-                  "Ambiente lifestyle urbano, rua movimentada de dia",
-                  "Cenário de praia ao pôr do sol, clima tropical",
-                  "Escritório moderno, ambiente corporativo clean",
-                  "Quarto estético aesthetic, tons pastéis",
-                ].map(s => (
-                  <button key={s} type="button" onClick={() => update({ prompt: s })}
-                    className="text-left px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none transition-all"
-                    style={{ background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Cor de fundo</label>
-              <div className="flex flex-wrap gap-2">
-                {["#ffffff", "#f8f4f0", "#1a1a2e", "#0f3460", "#e8f5e9", "#fce4ec", "#e3f2fd", "#000000"].map(c => (
-                  <button key={c} type="button" onClick={() => update({ bgColor: c })}
-                    className="w-7 h-7 rounded-full cursor-pointer border-none transition-transform hover:scale-110"
-                    style={{ background: c, outline: node.data.bgColor === c ? "2px solid #7c6df5" : "2px solid transparent", outlineOffset: "2px" }} />
-                ))}
-              </div>
-            </div>
-          </>
+          <CenarioPicker node={node} update={update} onUpdate={onUpdate} />
         )}
 
         {/* ── AVATAR ── */}
@@ -973,6 +1082,7 @@ export default function TikTokCanvasInner() {
       let script = "";
       let voiceId = VOICE_IDS["pt-br"];
       let bgColor = "#ffffff";
+      let cenarioImageUrl = "";
 
       for (const edge of connectedEdges) {
         const sourceNode = nodes.find(n => n.id === edge.source);
@@ -988,6 +1098,7 @@ export default function TikTokCanvasInner() {
         }
         if (sourceNode.data.type === "cenario") {
           bgColor = (sourceNode.data.bgColor as string) || "#ffffff";
+          cenarioImageUrl = (sourceNode.data as any).cenarioImageUrl || "";
         }
         // Busca indiretamente via avatar -> produto
         const indirectEdges = edges.filter(e => e.target === sourceNode.id);
@@ -1019,6 +1130,7 @@ export default function TikTokCanvasInner() {
             avatar_id: avatarId,
             script,
             voice_id: voiceId,
+            background_image_url: cenarioImageUrl || null,
             background_color: bgColor,
             width: (gerarNode.data.format as string) === "16:9" ? 1920 : 1080,
             height: (gerarNode.data.format as string) === "16:9" ? 1080 : 1920,
