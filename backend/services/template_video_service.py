@@ -1,0 +1,157 @@
+# ─────────────────────────────────────────────────────────────
+# backend/services/template_video_service.py
+# Gera vídeo de produto a partir de um template pronto (biblioteca de
+# prompts, estilo PipClip) + foto do produto enviada pelo usuário.
+# ─────────────────────────────────────────────────────────────
+
+import os
+import re
+import httpx
+import base64
+from anthropic import Anthropic
+
+KLING_API_KEY = os.environ["KLING_API_KEY"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
+KLING_API_URL = "https://api-singapore.klingai.com/v1/videos/image2video"
+
+anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
+
+
+def describe_product_photo(image_url: str, description_style: str) -> str:
+    """
+    Usa a Claude (visão) pra descrever a foto do produto do usuário no MESMO
+    estilo clínico/fotográfico do template — sem mencionar marca, sem
+    invenções, só o que dá pra ver na imagem.
+    """
+    # Baixa a imagem e converte pra base64 (Claude precisa do binário, não da URL)
+    img_resp = httpx.get(image_url, timeout=30)
+    img_resp.raise_for_status()
+    media_type = img_resp.headers.get("content-type", "image/jpeg")
+    image_b64 = base64.b64encode(img_resp.content).decode("utf-8")
+
+    message = anthropic_client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": media_type,
+                            "data": image_b64,
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"{description_style}\n\n"
+                            "Descreva o produto desta foto em inglês, em 2-3 frases, "
+                            "no estilo de um prompt de geração de vídeo (formato usado "
+                            "por ferramentas como Kling AI / RunwayML). Foque em forma, "
+                            "cor, material e características visuais únicas. NÃO mencione "
+                            "marca. NÃO invente detalhes que não dá pra ver na foto. "
+                            "Responda APENAS com a descrição, sem preâmbulo."
+                        ),
+                    },
+                ],
+            }
+        ],
+    )
+    return message.content[0].text.strip()
+
+
+def _fill_placeholders(text: str, values: dict) -> str:
+    def repl(match):
+        key = match.group(1)
+        return values.get(key, "")
+    return re.sub(r"\{(\w+)\}", repl, text)
+
+
+def build_multi_prompt(template: dict, product_description: str, product_name: str, price: str = "") -> list[dict]:
+    """
+    Monta o array multi_prompt do Kling a partir dos beats do template,
+    substituindo os placeholders pela descrição real do produto do usuário.
+    """
+    values = {
+        "PRODUCT_DESCRIPTION": product_description,
+        "PRODUCT_NAME": product_name,
+        "PRICE": price,
+    }
+
+    multi_prompt = []
+    for beat in template["beats"]:
+        duration = beat["end_s"] - beat["start_s"]
+        camera_prompt = _fill_placeholders(beat["camera_prompt"], values)
+        multi_prompt.append({
+            "prompt": camera_prompt,
+            "duration": str(duration),
+        })
+
+    return multi_prompt
+
+
+def build_narration_script(template: dict, product_name: str, price: str = "") -> list[dict]:
+    """Retorna a lista de falas (com timing) pra gerar a narração em PT-BR depois."""
+    values = {"PRODUCT_NAME": product_name, "PRICE": price}
+    return [
+        {
+            "start_s": beat["start_s"],
+            "end_s": beat["end_s"],
+            "text": _fill_placeholders(beat["narration_pt"], values),
+        }
+        for beat in template["beats"]
+    ]
+
+
+def generate_video_from_template(
+    template: dict,
+    product_image_url: str,
+    product_name: str,
+    price: str = "",
+) -> dict:
+    """
+    Ponto de entrada principal. Roda dentro de uma Celery task (não numa
+    request síncrona — a geração no Kling pode levar 1-3 minutos).
+
+    Retorna o task_id do Kling; o polling de status usa o mesmo padrão
+    que já existe no heygen.py (GET /status/{id}).
+    """
+    product_description = describe_product_photo(
+        product_image_url, template["description_style"]
+    )
+
+    multi_prompt = build_multi_prompt(template, product_description, product_name, price)
+    narration_script = build_narration_script(template, product_name, price)
+
+    payload = {
+        "model_name": "kling-v2-6",
+        "image": product_image_url,
+        "multi_prompt": multi_prompt,
+        "negative_prompt": template.get(
+            "negative_prompt",
+            "blurry, distorted, extra limbs, watermark, text overlay, low quality",
+        ),
+        "mode": "pro",
+        "sound": "off",  # narração em PT-BR é adicionada depois via TTS + mux
+    }
+
+    resp = httpx.post(
+        KLING_API_URL,
+        headers={
+            "Authorization": f"Bearer {KLING_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=60,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+
+    return {
+        "kling_task_id": data["data"]["task_id"],
+        "product_description": product_description,
+        "narration_script": narration_script,
+    }
