@@ -238,10 +238,18 @@ async def get_video_status(video_id: str):
             raise HTTPException(status_code=res.status_code, detail="Erro ao verificar status")
 
         data = res.json().get("data", {})
+
+        # IMPORTANTE: a HeyGen retorna video_url/thumbnail_url como `None`
+        # (não apenas "ausente") enquanto o vídeo ainda está processando.
+        # `.get("campo", "padrão")` só usa o padrão quando a CHAVE não existe
+        # — como ela existe com valor None, isso quebrava a validação do
+        # Pydantic (esperava string, recebia None) e crashava esse endpoint
+        # a cada poll, aparecendo no navegador como falso erro de CORS.
+        error_field = data.get("error")
         return VideoStatusResponse(
             video_id=video_id,
-            status=data.get("status", "processing"),
-            video_url=data.get("video_url", ""),
-            thumbnail_url=data.get("thumbnail_url", ""),
-            error=data.get("error", {}).get("message", "") if isinstance(data.get("error"), dict) else "",
+            status=data.get("status") or "processing",
+            video_url=data.get("video_url") or "",
+            thumbnail_url=data.get("thumbnail_url") or "",
+            error=error_field.get("message", "") if isinstance(error_field, dict) else (error_field or ""),
         )
