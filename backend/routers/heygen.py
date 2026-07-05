@@ -20,7 +20,8 @@ class GenerateVideoRequest(BaseModel):
     avatar_id: str  # heygen_avatar_id (avatar público) OU talking_photo_id (avatar próprio)
     script: str
     voice_id: str = "6872a840c4194f42a7f8ce0aee47660c"  # Pedro Lima PT-BR
-    # Fundo: usa imagem se tiver URL, senão cor sólida
+    # Fundo: prioridade é vídeo (cenário gerado pelo Kling) > imagem > cor sólida
+    background_video_url: Optional[str] = None
     background_image_url: Optional[str] = None
     background_color: str = "#ffffff"
     width: int = 1080
@@ -151,24 +152,33 @@ def _resolve_avatar_kind(avatar_id: str, hinted_kind: Optional[str]) -> str:
     return "avatar"
 
 
-@router.post("/generate", response_model=GenerateVideoResponse)
-async def generate_video(req: GenerateVideoRequest):
-    """Gera vídeo com avatar — usa imagem de cenário se disponível.
-    Suporta tanto avatares públicos da HeyGen quanto photo avatars próprios
-    (fotorrealistas) da biblioteca ClipForge."""
-
-    # Define o background
+def _build_background(req: "GenerateVideoRequest") -> dict:
+    """Monta o objeto de background pro payload da HeyGen.
+    Prioridade: vídeo (cenário gerado pelo Kling) > imagem > cor sólida."""
+    if req.background_video_url:
+        return {
+            "type": "video",
+            "url": req.background_video_url,
+            "play_style": "loop",  # repete o vídeo se ele for mais curto que a fala
+        }
     if req.background_image_url:
-        background = {
+        return {
             "type": "image",
             "url": req.background_image_url,
         }
-    else:
-        background = {
-            "type": "color",
-            "value": req.background_color,
-        }
+    return {
+        "type": "color",
+        "value": req.background_color,
+    }
 
+
+@router.post("/generate", response_model=GenerateVideoResponse)
+async def generate_video(req: GenerateVideoRequest):
+    """Gera vídeo com avatar — usa vídeo/imagem de cenário se disponível.
+    Suporta tanto avatares públicos da HeyGen quanto photo avatars próprios
+    (fotorrealistas) da biblioteca ClipForge."""
+
+    background = _build_background(req)
     kind = _resolve_avatar_kind(req.avatar_id, req.avatar_kind)
 
     if kind == "talking_photo":
