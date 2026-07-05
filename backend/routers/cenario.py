@@ -1,145 +1,132 @@
-# ─────────────────────────────────────────────────────────────
-# backend/routers/cenario.py
-# Geração de cenário via Kling AI (text-to-image)
-# ─────────────────────────────────────────────────────────────
+"""
+scripts/test_generate_one_video.py
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-from config import get_settings
-import httpx
-import asyncio
-import jwt
+TESTE MANUAL — gera 1 vídeo real no Kling, usando o template "Giro elegante"
+(ou outro que você passar), pra você julgar a qualidade antes de automatizar
+qualquer galeria/script de seed.
+
+Isso VAI GASTAR CRÉDITO real do Kling (é só 1 vídeo, mas é de verdade).
+
+Como rodar (no Shell do Render, dentro do serviço clipforge-6yzz, ou local
+se tiver o backend clonado com as env vars configuradas):
+
+    python -m scripts.test_generate_one_video \
+        "https://url-da-foto-do-produto.jpg" \
+        "Relógio Feminino Vintage" \
+        "39,90"
+"""
+
+import sys
+import os
 import time
+import httpx
 
-router = APIRouter()
-settings = get_settings()
+from db.database import get_supabase
+from services.template_video_service import (
+    describe_product_photo,
+    build_multi_prompt,
+    build_narration_script,
+)
 
-KLING_API_URL = "https://api.klingai.com"
-
-
-def get_kling_token() -> str:
-    """Gera JWT token para autenticação no Kling AI."""
-    # A key do Kling tem formato: AccessKeyID:AccessKeySecret
-    parts = settings.kling_api_key.split(":")
-    if len(parts) == 2:
-        access_key_id, access_key_secret = parts
-    else:
-        # Se não tiver ":", usa a key diretamente como Bearer
-        return settings.kling_api_key
-
-    now = int(time.time())
-    payload = {
-        "iss": access_key_id,
-        "exp": now + 1800,  # 30 min
-        "nbf": now - 5,
-    }
-    token = jwt.encode(payload, access_key_secret, algorithm="HS256")
-    return token
+KLING_API_KEY = os.environ["KLING_API_KEY"]
+KLING_GENERATE_URL = "https://api-singapore.klingai.com/v1/videos/image2video"
+KLING_STATUS_URL = "https://api-singapore.klingai.com/v1/videos/image2video/{task_id}"
 
 
-class GenerateCenarioRequest(BaseModel):
-    prompt: str
-    negative_prompt: str = "people, person, human, text, watermark, blurry, low quality"
-    aspect_ratio: str = "9:16"  # Para vídeo vertical TikTok
-    style: str = "photography"  # photography, anime, digital_art
-
-
-class CenarioResponse(BaseModel):
-    task_id: str
-    status: str
-    image_url: str = ""
-    error: str = ""
-
-
-PROMPT_TEMPLATES = {
-    "estudio": "Professional product photography studio, clean white background, soft natural lighting, minimalist aesthetic, high-end commercial photography",
-    "lifestyle_urbano": "Modern urban lifestyle background, city street during golden hour, bokeh effect, professional photography",
-    "praia": "Tropical beach sunset background, golden hour lighting, warm tones, professional photography, no people",
-    "corporativo": "Modern corporate office background, clean desk, professional environment, soft lighting",
-    "aesthetic": "Aesthetic pastel room background, soft pink and beige tones, minimalist decor, cozy atmosphere",
-    "natureza": "Beautiful nature background, lush green forest, soft sunlight filtering through trees, serene atmosphere",
-}
-
-
-@router.get("/templates")
-async def get_templates():
-    """Retorna prompts pré-definidos de cenários."""
-    return {"templates": [
-        {"id": k, "label": v.split(",")[0].strip(), "prompt": v}
-        for k, v in PROMPT_TEMPLATES.items()
-    ]}
-
-
-@router.post("/generate", response_model=CenarioResponse)
-async def generate_cenario(req: GenerateCenarioRequest):
-    """Gera imagem de cenário via Kling AI e aguarda o resultado."""
-
-    # Enriquece o prompt para cenário profissional de produto
-    enriched_prompt = f"{req.prompt}, professional product video background, high quality, 4K, cinematic, no people, no text"
-
-    headers = {
-        "Authorization": f"Bearer {get_kling_token()}",
-        "Content-Type": "application/json",
-    }
-
-    payload = {
-        "model_name": "kling-v1-5",
-        "prompt": enriched_prompt,
-        "negative_prompt": req.negative_prompt,
-        "n": 1,
-        "aspect_ratio": req.aspect_ratio,
-        "image_fidelity": 0.5,
-    }
-
-    async with httpx.AsyncClient(timeout=120) as client:
-        # Inicia geração
-        res = await client.post(
-            f"{KLING_API_URL}/v1/images/generations",
-            headers=headers,
-            json=payload,
+def poll_kling_until_done(task_id: str, timeout_s: int = 600) -> str:
+    elapsed = 0
+    while elapsed < timeout_s:
+        resp = httpx.get(
+            KLING_STATUS_URL.format(task_id=task_id),
+            headers={"Authorization": f"Bearer {KLING_API_KEY}"},
+            timeout=30,
         )
+        resp.raise_for_status()
+        data = resp.json()["data"]
+        status = data["task_status"]
+        print(f"  status: {status} ({elapsed}s)")
 
-        if res.status_code != 200:
-            raise HTTPException(
-                status_code=res.status_code,
-                detail=f"Erro Kling: {res.text}"
-            )
+        if status == "succeed":
+            return data["task_result"]["videos"][0]["url"]
+        if status == "failed":
+            raise RuntimeError(f"Kling falhou: {data}")
 
-        data = res.json()
-        task_id = data.get("data", {}).get("task_id", "")
+        time.sleep(10)
+        elapsed += 10
 
-        if not task_id:
-            raise HTTPException(status_code=500, detail="Kling não retornou task_id")
+    raise TimeoutError("Timeout esperando o Kling terminar.")
 
-        # Polling até completar (max 90s)
-        for attempt in range(18):
-            await asyncio.sleep(5)
 
-            status_res = await client.get(
-                f"{KLING_API_URL}/v1/images/generations/{task_id}",
-                headers=headers,
-            )
+def main():
+    if len(sys.argv) < 3:
+        print("Uso: python -m scripts.test_generate_one_video <url_foto> <nome_produto> [preco]")
+        sys.exit(1)
 
-            if status_res.status_code != 200:
-                continue
+    product_image_url = sys.argv[1]
+    product_name = sys.argv[2]
+    price = sys.argv[3] if len(sys.argv) > 3 else "39,90"
 
-            status_data = status_res.json().get("data", {})
-            task_status = status_data.get("task_status", "processing")
+    supabase = get_supabase()
+    template = (
+        supabase.table("prompt_templates")
+        .select("*")
+        .eq("name", "Giro elegante — produto em destaque")
+        .limit(1)
+        .execute()
+    ).data[0]
 
-            if task_status == "succeed":
-                images = status_data.get("task_result", {}).get("images", [])
-                image_url = images[0].get("url", "") if images else ""
+    print(f"Template: {template['name']}")
+    print(f"Foto do produto: {product_image_url}")
+    print(f"Nome: {product_name} | Preço: R$ {price}\n")
 
-                if not image_url:
-                    raise HTTPException(status_code=500, detail="Imagem não gerada")
+    print("1/4 — Descrevendo a foto com a Claude...")
+    description = describe_product_photo(product_image_url, template["description_style"])
+    print(f"   → {description}\n")
 
-                return CenarioResponse(
-                    task_id=task_id,
-                    status="done",
-                    image_url=image_url,
-                )
+    print("2/4 — Montando o multi_prompt pro Kling...")
+    multi_prompt = build_multi_prompt(template, description, product_name, price)
+    narration_script = build_narration_script(template, product_name, price)
+    for i, beat in enumerate(multi_prompt):
+        print(f"   Beat {i+1} ({beat['duration']}s): {beat['prompt'][:100]}...")
+    print()
 
-            elif task_status == "failed":
-                raise HTTPException(status_code=500, detail="Kling falhou ao gerar imagem")
+    print("3/4 — Enviando pro Kling (isso gasta crédito real)...")
+    total_duration = sum(beat["end_s"] - beat["start_s"] for beat in template["beats"])
+    kling_duration = "10" if total_duration > 5 else "5"
+    payload = {
+        "model_name": "kling-v1",
+        "image": product_image_url,
+        "duration": kling_duration,
+        "multi_prompt": multi_prompt,
+        "negative_prompt": template["negative_prompt"],
+        "mode": "std",
+        "sound": "off",
+    }
+    resp = httpx.post(
+        KLING_GENERATE_URL,
+        headers={"Authorization": f"Bearer {KLING_API_KEY}", "Content-Type": "application/json"},
+        json=payload,
+        timeout=60,
+    )
+    if resp.status_code >= 400:
+        print(f"\n❌ Kling retornou erro {resp.status_code}:")
+        print(resp.text)
+        print(f"\nPayload enviado:\n{payload}\n")
+        resp.raise_for_status()
+    task_id = resp.json()["data"]["task_id"]
+    print(f"   task_id: {task_id}\n")
 
-        raise HTTPException(status_code=408, detail="Timeout aguardando cenário (90s)")
+    print("4/4 — Aguardando o Kling terminar (pode levar 1-3 min)...")
+    video_url = poll_kling_until_done(task_id)
+
+    print("\n" + "=" * 60)
+    print("VÍDEO PRONTO (mudo, sem narração ainda):")
+    print(video_url)
+    print("=" * 60)
+    print("\nNarração que entraria por cima (próxima etapa a construir):")
+    for beat in narration_script:
+        print(f"  [{beat['start_s']}s-{beat['end_s']}s] {beat['text']}")
+
+
+if __name__ == "__main__":
+    main()
