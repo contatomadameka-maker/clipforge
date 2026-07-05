@@ -94,12 +94,12 @@ def main():
     total_duration = sum(beat["end_s"] - beat["start_s"] for beat in template["beats"])
     kling_duration = "10" if total_duration > 5 else "5"
     payload = {
-        "model_name": "kling-v2-6",
+        "model_name": "kling-v1",
         "image": product_image_url,
         "duration": kling_duration,
         "multi_prompt": multi_prompt,
         "negative_prompt": template["negative_prompt"],
-        "mode": "pro",
+        "mode": "std",
         "sound": "off",
     }
     resp = httpx.post(
