@@ -105,7 +105,11 @@ def main():
         json=payload,
         timeout=60,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        print(f"\n❌ Kling retornou erro {resp.status_code}:")
+        print(resp.text)
+        print(f"\nPayload enviado:\n{payload}\n")
+        resp.raise_for_status()
     task_id = resp.json()["data"]["task_id"]
     print(f"   task_id: {task_id}\n")
 
