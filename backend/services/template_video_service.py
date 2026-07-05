@@ -166,9 +166,16 @@ def generate_video_from_template(
     multi_prompt = build_multi_prompt(template, product_description, product_name, price)
     narration_script = build_narration_script(template, product_name, price)
 
+    # O Kling exige a duração TOTAL no nível principal do payload (só "5" ou
+    # "10" são aceitos), além da duração de cada beat dentro do multi_prompt.
+    # Sem isso, ele ignora os beats e usa o padrão dele (5s), cortando vídeo.
+    total_duration = sum(beat["end_s"] - beat["start_s"] for beat in template["beats"])
+    kling_duration = "10" if total_duration > 5 else "5"
+
     payload = {
         "model_name": "kling-v2-6",
         "image": product_image_url,
+        "duration": kling_duration,
         "multi_prompt": multi_prompt,
         "negative_prompt": template.get(
             "negative_prompt",
