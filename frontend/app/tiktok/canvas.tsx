@@ -38,7 +38,8 @@ interface BlockData extends Record<string, unknown> {
   // cenario
   prompt?: string;
   bgColor?: string;
-  cenarioImageUrl?: string;
+  cenarioImageUrl?: string; // legado — mantido por compatibilidade
+  cenarioVideoUrl?: string; // Kling AI agora gera vídeo, não imagem estática
   cenarioStatus?: "idle" | "generating" | "done" | "error";
   // avatar
   avatarId?: string;
@@ -171,7 +172,15 @@ function CenarioNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
       <BaseBlock type="cenario" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.cenarioImageUrl ? (
+        {d.cenarioVideoUrl ? (
+          <div className="relative rounded-lg overflow-hidden" style={{ height: "80px" }}>
+            <video src={d.cenarioVideoUrl} className="w-full h-full object-cover" autoPlay loop muted playsInline />
+            <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-medium"
+              style={{ background: "rgba(62,207,142,0.9)", color: "#fff" }}>
+              ✓ Pronto · 🎬 vídeo
+            </div>
+          </div>
+        ) : d.cenarioImageUrl ? (
           <div className="relative rounded-lg overflow-hidden" style={{ height: "80px" }}>
             <img src={d.cenarioImageUrl} className="w-full h-full object-cover" alt="Cenário" />
             <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-medium"
@@ -366,8 +375,11 @@ function CenarioPicker({ node, update, onUpdate }: {
       }
 
       const data = await res.json();
+      // Kling AI agora gera VÍDEO (data.video_url), não mais imagem estática.
+      // Mantemos limpeza do campo antigo (cenarioImageUrl) para não conflitar na hora de montar o payload do /heygen/generate.
       onUpdate(node.id, {
-        cenarioImageUrl: data.image_url,
+        cenarioVideoUrl: data.video_url,
+        cenarioImageUrl: "",
         cenarioStatus: "done",
       } as any);
 
@@ -379,17 +391,23 @@ function CenarioPicker({ node, update, onUpdate }: {
     }
   }
 
+  const hasResult = !!(node.data as any).cenarioVideoUrl || !!(node.data as any).cenarioImageUrl;
+
   return (
     <div className="flex flex-col gap-4">
 
       {/* Preview se já gerou */}
-      {(node.data as any).cenarioImageUrl && (
+      {hasResult && (
         <div>
           <label className="text-xs font-medium text-[#9090a8] block mb-2">Cenário gerado</label>
           <div className="relative rounded-xl overflow-hidden" style={{ height: "140px" }}>
-            <img src={(node.data as any).cenarioImageUrl} className="w-full h-full object-cover" alt="Cenário" />
+            {(node.data as any).cenarioVideoUrl ? (
+              <video src={(node.data as any).cenarioVideoUrl} className="w-full h-full object-cover" autoPlay loop muted playsInline controls />
+            ) : (
+              <img src={(node.data as any).cenarioImageUrl} className="w-full h-full object-cover" alt="Cenário" />
+            )}
             <button type="button"
-              onClick={() => onUpdate(node.id, { cenarioImageUrl: "", cenarioStatus: "idle" } as any)}
+              onClick={() => onUpdate(node.id, { cenarioImageUrl: "", cenarioVideoUrl: "", cenarioStatus: "idle" } as any)}
               className="absolute top-2 right-2 w-6 h-6 rounded-full flex items-center justify-center border-none cursor-pointer text-xs"
               style={{ background: "rgba(0,0,0,0.7)", color: "#fff" }}>
               ✕
@@ -451,7 +469,7 @@ function CenarioPicker({ node, update, onUpdate }: {
 
       {generating && (
         <p className="text-[11px] text-[#9090a8] text-center">
-          O Kling AI está criando seu cenário. Pode levar até 90 segundos.
+          O Kling AI está criando seu cenário em vídeo. Pode levar até 90 segundos.
         </p>
       )}
     </div>
@@ -1116,6 +1134,7 @@ export default function TikTokCanvasInner() {
       let voiceId = VOICE_IDS["pt-br"];
       let bgColor = "#ffffff";
       let cenarioImageUrl = "";
+      let cenarioVideoUrl = "";
 
       for (const edge of connectedEdges) {
         const sourceNode = nodes.find(n => n.id === edge.source);
@@ -1131,6 +1150,9 @@ export default function TikTokCanvasInner() {
         }
         if (sourceNode.data.type === "cenario") {
           bgColor = (sourceNode.data.bgColor as string) || "#ffffff";
+          // Kling agora gera vídeo — prioriza cenarioVideoUrl, mas mantém
+          // fallback pra cenarioImageUrl caso algum cenário antigo ainda use imagem
+          cenarioVideoUrl = (sourceNode.data as any).cenarioVideoUrl || "";
           cenarioImageUrl = (sourceNode.data as any).cenarioImageUrl || "";
         }
         // Busca indiretamente via avatar -> produto
@@ -1156,6 +1178,8 @@ export default function TikTokCanvasInner() {
 
       try {
         // Chama HeyGen para gerar vídeo
+        // background_video_url tem prioridade no backend (heygen.py); background_image_url
+        // e background_color ficam como fallback pra cenários antigos ou sem cenário gerado.
         const res = await fetch(`${API}/heygen/generate`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1163,6 +1187,7 @@ export default function TikTokCanvasInner() {
             avatar_id: avatarId,
             script,
             voice_id: voiceId,
+            background_video_url: cenarioVideoUrl || null,
             background_image_url: cenarioImageUrl || null,
             background_color: bgColor,
             width: (gerarNode.data.format as string) === "16:9" ? 1920 : 1080,
