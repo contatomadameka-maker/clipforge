@@ -12,4 +12,4 @@ from functools import lru_cache
 def get_supabase() -> Client:
     """Retorna o cliente Supabase em cache."""
     settings = get_settings()
-    return create_client(settings.supabase_url, settings.supabase_service_key)
+    return create_client(settings.supabase_url, settings.supabase_key)
