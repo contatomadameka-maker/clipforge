@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/cenario.py
-# Geração de cenário via Kling AI (text-to-image)
+# Geração de cenário via Kling AI (text-to-VIDEO, não mais imagem)
 # ─────────────────────────────────────────────────────────────
 
 from fastapi import APIRouter, HTTPException
@@ -14,17 +14,21 @@ import time
 router = APIRouter()
 settings = get_settings()
 
-KLING_API_URL = "https://api.klingai.com"
+# Mesmo domínio que já validamos funcionando na geração de vídeo dos
+# templates de produto (api.klingai.com, sem o "-singapore", dava erro
+# de região em alguns testes anteriores nesse projeto)
+KLING_API_URL = "https://api-singapore.klingai.com"
 
 
 def get_kling_token() -> str:
-    """Gera JWT token para autenticação no Kling AI."""
-    # A key do Kling tem formato: AccessKeyID:AccessKeySecret
+    """Gera JWT token para autenticação no Kling AI, se a key tiver o
+    formato AccessKeyID:AccessKeySecret. Se não tiver ':', usa a key
+    direto como Bearer (é o caso da sua conta atual, já confirmado
+    funcionando nos testes)."""
     parts = settings.kling_api_key.split(":")
     if len(parts) == 2:
         access_key_id, access_key_secret = parts
     else:
-        # Se não tiver ":", usa a key diretamente como Bearer
         return settings.kling_api_key
 
     now = int(time.time())
@@ -41,13 +45,12 @@ class GenerateCenarioRequest(BaseModel):
     prompt: str
     negative_prompt: str = "people, person, human, text, watermark, blurry, low quality"
     aspect_ratio: str = "9:16"  # Para vídeo vertical TikTok
-    style: str = "photography"  # photography, anime, digital_art
 
 
 class CenarioResponse(BaseModel):
     task_id: str
     status: str
-    image_url: str = ""
+    video_url: str = ""
     error: str = ""
 
 
@@ -72,10 +75,9 @@ async def get_templates():
 
 @router.post("/generate", response_model=CenarioResponse)
 async def generate_cenario(req: GenerateCenarioRequest):
-    """Gera imagem de cenário via Kling AI e aguarda o resultado."""
+    """Gera VÍDEO de cenário via Kling AI (text2video) e aguarda o resultado."""
 
-    # Enriquece o prompt para cenário profissional de produto
-    enriched_prompt = f"{req.prompt}, professional product video background, high quality, 4K, cinematic, no people, no text"
+    enriched_prompt = f"{req.prompt}, professional product video background, high quality, cinematic, no people, no text, static camera, subtle ambient movement"
 
     headers = {
         "Authorization": f"Bearer {get_kling_token()}",
@@ -83,18 +85,17 @@ async def generate_cenario(req: GenerateCenarioRequest):
     }
 
     payload = {
-        "model_name": "kling-v1-5",
+        "model_name": "kling-v1",
         "prompt": enriched_prompt,
         "negative_prompt": req.negative_prompt,
-        "n": 1,
+        "duration": "5",
         "aspect_ratio": req.aspect_ratio,
-        "image_fidelity": 0.5,
+        "mode": "std",
     }
 
     async with httpx.AsyncClient(timeout=120) as client:
-        # Inicia geração
         res = await client.post(
-            f"{KLING_API_URL}/v1/images/generations",
+            f"{KLING_API_URL}/v1/videos/text2video",
             headers=headers,
             json=payload,
         )
@@ -111,12 +112,12 @@ async def generate_cenario(req: GenerateCenarioRequest):
         if not task_id:
             raise HTTPException(status_code=500, detail="Kling não retornou task_id")
 
-        # Polling até completar (max 90s)
-        for attempt in range(18):
+        # Polling até completar (max 150s — vídeo demora mais que imagem)
+        for attempt in range(30):
             await asyncio.sleep(5)
 
             status_res = await client.get(
-                f"{KLING_API_URL}/v1/images/generations/{task_id}",
+                f"{KLING_API_URL}/v1/videos/text2video/{task_id}",
                 headers=headers,
             )
 
@@ -127,19 +128,19 @@ async def generate_cenario(req: GenerateCenarioRequest):
             task_status = status_data.get("task_status", "processing")
 
             if task_status == "succeed":
-                images = status_data.get("task_result", {}).get("images", [])
-                image_url = images[0].get("url", "") if images else ""
+                videos = status_data.get("task_result", {}).get("videos", [])
+                video_url = videos[0].get("url", "") if videos else ""
 
-                if not image_url:
-                    raise HTTPException(status_code=500, detail="Imagem não gerada")
+                if not video_url:
+                    raise HTTPException(status_code=500, detail="Vídeo não gerado")
 
                 return CenarioResponse(
                     task_id=task_id,
                     status="done",
-                    image_url=image_url,
+                    video_url=video_url,
                 )
 
             elif task_status == "failed":
-                raise HTTPException(status_code=500, detail="Kling falhou ao gerar imagem")
+                raise HTTPException(status_code=500, detail="Kling falhou ao gerar vídeo")
 
-        raise HTTPException(status_code=408, detail="Timeout aguardando cenário (90s)")
+        raise HTTPException(status_code=408, detail="Timeout aguardando cenário (150s)")
