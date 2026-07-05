@@ -359,8 +359,13 @@ function CenarioPicker({ node, update, onUpdate }: {
     setGenerating(true);
     onUpdate(node.id, { cenarioStatus: "generating" } as any);
 
+    const API = "https://clipforge-6yzz.onrender.com";
+
     try {
-      const res = await fetch("https://clipforge-6yzz.onrender.com/cenario/generate", {
+      // 1) Dispara o job — o backend responde IMEDIATAMENTE com um task_id
+      // (não mais espera o Kling terminar dentro da mesma requisição, o que
+      // causava o 408 Request Timeout de antes)
+      const res = await fetch(`${API}/cenario/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -371,14 +376,52 @@ function CenarioPicker({ node, update, onUpdate }: {
 
       if (!res.ok) {
         const err = await res.json();
-        throw new Error(err.detail || "Erro ao gerar cenário");
+        throw new Error(err.detail || "Erro ao iniciar geração do cenário");
       }
 
-      const data = await res.json();
-      // Kling AI agora gera VÍDEO (data.video_url), não mais imagem estática.
-      // Mantemos limpeza do campo antigo (cenarioImageUrl) para não conflitar na hora de montar o payload do /heygen/generate.
+      const { task_id } = await res.json();
+      if (!task_id) throw new Error("Backend não retornou task_id");
+
+      // 2) Polling em /cenario/status/{task_id} — mesmo padrão já usado
+      // pro HeyGen em handleGerarTodos. Kling costuma levar 30-90s, então
+      // damos margem de até ~200s (40 tentativas x 5s) antes de desistir.
+      const videoUrl: string = await new Promise((resolve, reject) => {
+        let attempts = 0;
+        const maxAttempts = 40;
+
+        const tick = async () => {
+          attempts++;
+          try {
+            const statusRes = await fetch(`${API}/cenario/status/${task_id}`);
+            if (!statusRes.ok) throw new Error("Erro ao consultar status do cenário");
+            const statusData = await statusRes.json();
+
+            if (statusData.status === "done") {
+              resolve(statusData.video_url);
+              return;
+            }
+            if (statusData.status === "error") {
+              reject(new Error(statusData.error || "Kling falhou ao gerar vídeo"));
+              return;
+            }
+            if (attempts >= maxAttempts) {
+              reject(new Error("Timeout aguardando cenário — tente novamente"));
+              return;
+            }
+            setTimeout(tick, 5000);
+          } catch (e) {
+            reject(e);
+          }
+        };
+
+        tick();
+      });
+
+      // Kling AI agora gera VÍDEO (video_url), não mais imagem estática.
+      // Limpa o campo antigo (cenarioImageUrl) pra não conflitar na hora
+      // de montar o payload do /heygen/generate.
       onUpdate(node.id, {
-        cenarioVideoUrl: data.video_url,
+        cenarioVideoUrl: videoUrl,
         cenarioImageUrl: "",
         cenarioStatus: "done",
       } as any);
