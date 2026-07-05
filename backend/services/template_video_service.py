@@ -58,7 +58,7 @@ def describe_product_photo(image_url: str, description_style: str) -> str:
 
     message = anthropic_client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=300,
+        max_tokens=100,
         messages=[
             {
                 "role": "user",
@@ -75,12 +75,12 @@ def describe_product_photo(image_url: str, description_style: str) -> str:
                         "type": "text",
                         "text": (
                             f"{description_style}\n\n"
-                            "Descreva o produto desta foto em inglês, em 2-3 frases, "
-                            "no estilo de um prompt de geração de vídeo (formato usado "
-                            "por ferramentas como Kling AI / RunwayML). Foque em forma, "
-                            "cor, material e características visuais únicas. NÃO mencione "
-                            "marca. NÃO invente detalhes que não dá pra ver na foto. "
-                            "Responda APENAS com a descrição, sem preâmbulo."
+                            "Descreva o produto desta foto em inglês, em UMA frase curta "
+                            "(máximo 25 palavras / 160 caracteres), no estilo de um prompt "
+                            "de geração de vídeo. Foque só na característica visual mais "
+                            "marcante (cor, forma, material principal). NÃO mencione marca. "
+                            "NÃO invente detalhes que não dá pra ver na foto. Responda "
+                            "APENAS com a descrição, sem preâmbulo."
                         ),
                     },
                 ],
@@ -95,6 +95,18 @@ def _fill_placeholders(text: str, values: dict) -> str:
         key = match.group(1)
         return values.get(key, "")
     return re.sub(r"\{(\w+)\}", repl, text)
+
+
+def _truncate_to_limit(text: str, limit: int = 500) -> str:
+    """
+    Trava de segurança: o Kling rejeita prompts com mais de 512 caracteres.
+    Usamos 500 como margem. Corta no último espaço antes do limite, pra não
+    truncar no meio de uma palavra.
+    """
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0]
+    return cut
 
 
 def build_multi_prompt(template: dict, product_description: str, product_name: str, price: str = "") -> list[dict]:
@@ -112,6 +124,7 @@ def build_multi_prompt(template: dict, product_description: str, product_name: s
     for beat in template["beats"]:
         duration = beat["end_s"] - beat["start_s"]
         camera_prompt = _fill_placeholders(beat["camera_prompt"], values)
+        camera_prompt = _truncate_to_limit(camera_prompt)  # nunca passa de 512
         multi_prompt.append({
             "prompt": camera_prompt,
             "duration": str(duration),
