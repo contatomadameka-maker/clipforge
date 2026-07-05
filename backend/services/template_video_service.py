@@ -17,6 +17,25 @@ KLING_API_URL = "https://api-singapore.klingai.com/v1/videos/image2video"
 anthropic_client = Anthropic(api_key=ANTHROPIC_API_KEY)
 
 
+def _detect_media_type(image_bytes: bytes) -> str:
+    """
+    Detecta o formato real da imagem pelos primeiros bytes (assinatura do
+    arquivo), em vez de confiar no header Content-Type — o R2 às vezes
+    serve imagens com Content-Type genérico (application/octet-stream),
+    o que faz a Claude rejeitar com 'Could not process image'.
+    """
+    if image_bytes[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if image_bytes[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if image_bytes[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if image_bytes[:4] == b"RIFF" and image_bytes[8:12] == b"WEBP":
+        return "image/webp"
+    # Fallback: assume jpeg (formato mais comum de upload de produto)
+    return "image/jpeg"
+
+
 def describe_product_photo(image_url: str, description_style: str) -> str:
     """
     Usa a Claude (visão) pra descrever a foto do produto do usuário no MESMO
@@ -24,9 +43,17 @@ def describe_product_photo(image_url: str, description_style: str) -> str:
     invenções, só o que dá pra ver na imagem.
     """
     # Baixa a imagem e converte pra base64 (Claude precisa do binário, não da URL)
-    img_resp = httpx.get(image_url, timeout=30)
+    img_resp = httpx.get(image_url, timeout=30, follow_redirects=True)
     img_resp.raise_for_status()
-    media_type = img_resp.headers.get("content-type", "image/jpeg")
+
+    if len(img_resp.content) < 100:
+        raise ValueError(
+            f"Resposta da URL da imagem parece vazia ou inválida "
+            f"({len(img_resp.content)} bytes). Confira se a URL '{image_url}' "
+            f"aponta pra uma imagem real e pública."
+        )
+
+    media_type = _detect_media_type(img_resp.content)
     image_b64 = base64.b64encode(img_resp.content).decode("utf-8")
 
     message = anthropic_client.messages.create(
