@@ -152,7 +152,14 @@ async def get_cenario_status(task_id: str):
                 detail=f"Erro ao verificar status no Kling: {res.text}"
             )
 
-        data = res.json().get("data", {})
+        raw = res.json()
+        # LOG TEMPORÁRIO — remover depois de confirmar o formato real da
+        # resposta do Kling. Isso aparece nos logs do Render (não no
+        # navegador), pra descobrir por que task_status nunca chega a
+        # "succeed" mesmo com HTTP 200 em todas as tentativas.
+        print(f"[Kling status raw] task_id={task_id} response={raw}")
+
+        data = raw.get("data", {})
         task_status = data.get("task_status", "processing")
 
         if task_status == "succeed":
