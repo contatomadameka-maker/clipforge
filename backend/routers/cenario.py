@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import get_settings
 import httpx
-import asyncio
 import jwt
 import time
 
@@ -50,6 +49,11 @@ class GenerateCenarioRequest(BaseModel):
 class CenarioResponse(BaseModel):
     task_id: str
     status: str
+
+
+class CenarioStatusResponse(BaseModel):
+    task_id: str
+    status: str  # "processing" | "done" | "error"
     video_url: str = ""
     error: str = ""
 
@@ -75,7 +79,17 @@ async def get_templates():
 
 @router.post("/generate", response_model=CenarioResponse)
 async def generate_cenario(req: GenerateCenarioRequest):
-    """Gera VÍDEO de cenário via Kling AI (text2video) e aguarda o resultado."""
+    """Dispara a geração de VÍDEO de cenário no Kling AI e retorna
+    IMEDIATAMENTE com o task_id (status='processing').
+
+    Antes esse endpoint ficava até 150s fazendo polling no Kling dentro
+    da própria requisição HTTP, e o Render (ou proxy na frente) cortava
+    a conexão antes disso, gerando 408 Request Timeout no frontend.
+
+    Agora segue o MESMO padrão já validado no heygen.py: generate só
+    inicia o job e devolve um ID; o frontend consulta /cenario/status/{task_id}
+    a cada poucos segundos até o vídeo terminar.
+    """
 
     enriched_prompt = f"{req.prompt}, professional product video background, high quality, cinematic, no people, no text, static camera, subtle ambient movement"
 
@@ -93,7 +107,7 @@ async def generate_cenario(req: GenerateCenarioRequest):
         "mode": "std",
     }
 
-    async with httpx.AsyncClient(timeout=120) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
             f"{KLING_API_URL}/v1/videos/text2video",
             headers=headers,
@@ -112,35 +126,58 @@ async def generate_cenario(req: GenerateCenarioRequest):
         if not task_id:
             raise HTTPException(status_code=500, detail="Kling não retornou task_id")
 
-        # Polling até completar (max 150s — vídeo demora mais que imagem)
-        for attempt in range(30):
-            await asyncio.sleep(5)
+        return CenarioResponse(task_id=task_id, status="processing")
 
-            status_res = await client.get(
-                f"{KLING_API_URL}/v1/videos/text2video/{task_id}",
-                headers=headers,
+
+@router.get("/status/{task_id}", response_model=CenarioStatusResponse)
+async def get_cenario_status(task_id: str):
+    """Consulta o status do vídeo no Kling AI. O frontend chama esse
+    endpoint em polling (a cada ~5s) até status == 'done' ou 'error' —
+    mesmo padrão do GET /heygen/status/{video_id}."""
+
+    headers = {
+        "Authorization": f"Bearer {get_kling_token()}",
+        "Content-Type": "application/json",
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            f"{KLING_API_URL}/v1/videos/text2video/{task_id}",
+            headers=headers,
+        )
+
+        if res.status_code != 200:
+            raise HTTPException(
+                status_code=res.status_code,
+                detail=f"Erro ao verificar status no Kling: {res.text}"
             )
 
-            if status_res.status_code != 200:
-                continue
+        data = res.json().get("data", {})
+        task_status = data.get("task_status", "processing")
 
-            status_data = status_res.json().get("data", {})
-            task_status = status_data.get("task_status", "processing")
+        if task_status == "succeed":
+            videos = data.get("task_result", {}).get("videos", [])
+            video_url = videos[0].get("url", "") if videos else ""
 
-            if task_status == "succeed":
-                videos = status_data.get("task_result", {}).get("videos", [])
-                video_url = videos[0].get("url", "") if videos else ""
-
-                if not video_url:
-                    raise HTTPException(status_code=500, detail="Vídeo não gerado")
-
-                return CenarioResponse(
+            if not video_url:
+                return CenarioStatusResponse(
                     task_id=task_id,
-                    status="done",
-                    video_url=video_url,
+                    status="error",
+                    error="Kling retornou sucesso mas sem video_url",
                 )
 
-            elif task_status == "failed":
-                raise HTTPException(status_code=500, detail="Kling falhou ao gerar vídeo")
+            return CenarioStatusResponse(
+                task_id=task_id,
+                status="done",
+                video_url=video_url,
+            )
 
-        raise HTTPException(status_code=408, detail="Timeout aguardando cenário (150s)")
+        if task_status == "failed":
+            return CenarioStatusResponse(
+                task_id=task_id,
+                status="error",
+                error="Kling falhou ao gerar vídeo",
+            )
+
+        # "processing" ou "submitted" — ainda não terminou
+        return CenarioStatusResponse(task_id=task_id, status="processing")
