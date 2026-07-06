@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     heygen_api_key: str = ""
     kling_api_key: str = ""
     fal_api_key: str = ""
+    replicate_api_token: str = ""
     elevenlabs_api_key: str = ""
     tavily_api_key: str = ""
     r2_account_id: str = ""
