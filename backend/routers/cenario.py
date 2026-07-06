@@ -1,17 +1,15 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/cenario.py
-# Geração de cenário via Kling AI — agora através da fal.ai
+# Geração de cenário via Kling AI — agora através da Replicate
 # ─────────────────────────────────────────────────────────────
 #
-# Por quê fal.ai em vez da Kling direto?
-# A API direta da Kling (api-singapore.klingai.com) se mostrou instável
-# em produção: tasks que ficavam presas em "processing" indefinidamente,
-# e uma consulta de status que devolvia respostas com timestamp
-# congelado (indício de cache num proxy no meio do caminho), mesmo com
-# o vídeo sendo de fato processado e consumindo crédito do lado da Kling.
+# Histórico: a API direta da Kling se mostrou instável (tasks presas,
+# cache estranho no status). Tentamos fal.ai como alternativa, mas a
+# conta ficou bloqueada ("Admin lock") por causa de um problema no
+# billing deles. Enquanto isso não resolve, usamos a Replicate — outro
+# hub de modelos de IA, com API de predictions bem estabelecida e
+# amplamente usada em produção.
 #
-# fal.ai hospeda o mesmo modelo Kling atrás de uma API de fila própria,
-# bem documentada e sem esses problemas de infraestrutura regional.
 # O contrato exposto pro resto do projeto (POST /generate → GET /status)
 # continua idêntico — o canvas.tsx não precisa de nenhuma mudança.
 
@@ -23,18 +21,17 @@ import httpx
 router = APIRouter()
 settings = get_settings()
 
-FAL_QUEUE_URL = "https://queue.fal.run"
+REPLICATE_API_URL = "https://api.replicate.com/v1"
 
-# Endpoint "standard" do Kling 1.6 na fal — bom equilíbrio de custo x
-# qualidade pra cenário de fundo (não precisa do tier "master"/"pro",
-# que é bem mais caro e voltado a cenas com protagonismo próprio).
-# Documentação: https://fal.ai/models/fal-ai/kling-video/v1.6/standard/text-to-video/api
-FAL_MODEL_ID = "fal-ai/kling-video/v1.6/standard/text-to-video"
+# Tier "standard" (720p) do Kling 1.6 na Replicate — bom custo-benefício
+# pra cenário de fundo, não precisa do tier "pro" (1080p, mais caro).
+# Docs: https://replicate.com/kwaivgi/kling-v1.6-standard/api/schema
+REPLICATE_MODEL = "kwaivgi/kling-v1.6-standard"
 
 
-def _fal_headers() -> dict:
+def _replicate_headers() -> dict:
     return {
-        "Authorization": f"Key {settings.fal_api_key}",
+        "Authorization": f"Bearer {settings.replicate_api_token}",
         "Content-Type": "application/json",
     }
 
@@ -78,82 +75,75 @@ async def get_templates():
 
 @router.post("/generate", response_model=CenarioResponse)
 async def generate_cenario(req: GenerateCenarioRequest):
-    """Submete o job de vídeo na fila da fal.ai e retorna IMEDIATAMENTE
-    com o request_id (status='processing'). O frontend consulta
-    /cenario/status/{task_id} em polling até o vídeo terminar — mesmo
-    padrão já usado no heygen.py."""
+    """Cria uma prediction na Replicate e retorna IMEDIATAMENTE com o
+    id (status='processing'). O frontend consulta /cenario/status/{task_id}
+    em polling até o vídeo terminar — mesmo padrão já usado no heygen.py."""
 
     enriched_prompt = f"{req.prompt}, professional product video background, high quality, cinematic, no people, no text, static camera, subtle ambient movement"
 
     payload = {
-        "prompt": enriched_prompt,
-        "negative_prompt": req.negative_prompt,
-        "duration": "5",
-        "aspect_ratio": req.aspect_ratio,
+        "input": {
+            "prompt": enriched_prompt,
+            "negative_prompt": req.negative_prompt,
+            "aspect_ratio": req.aspect_ratio,
+            "duration": 5,
+        }
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
-            f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}",
-            headers=_fal_headers(),
+            f"{REPLICATE_API_URL}/models/{REPLICATE_MODEL}/predictions",
+            headers=_replicate_headers(),
             json=payload,
         )
 
         if res.status_code not in (200, 201):
             raise HTTPException(
                 status_code=res.status_code,
-                detail=f"Erro fal.ai: {res.text}"
+                detail=f"Erro Replicate: {res.text}"
             )
 
         data = res.json()
-        request_id = data.get("request_id", "")
+        prediction_id = data.get("id", "")
 
-        if not request_id:
-            raise HTTPException(status_code=500, detail="fal.ai não retornou request_id")
+        if not prediction_id:
+            raise HTTPException(status_code=500, detail="Replicate não retornou id da prediction")
 
-        return CenarioResponse(task_id=request_id, status="processing")
+        return CenarioResponse(task_id=prediction_id, status="processing")
 
 
 @router.get("/status/{task_id}", response_model=CenarioStatusResponse)
 async def get_cenario_status(task_id: str):
-    """Consulta o status na fila da fal.ai. Quando status == COMPLETED,
-    busca o resultado final (video_url) numa segunda chamada — é assim
-    que a API de fila da fal.ai funciona (status e resultado são
-    endpoints separados)."""
-
-    status_url = f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}/requests/{task_id}/status"
+    """Consulta o status da prediction na Replicate. O frontend chama
+    esse endpoint em polling (a cada ~5s) até status == 'done' ou
+    'error' — mesmo padrão do GET /heygen/status/{video_id}."""
 
     async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(status_url, headers=_fal_headers())
+        res = await client.get(
+            f"{REPLICATE_API_URL}/predictions/{task_id}",
+            headers=_replicate_headers(),
+        )
 
         if res.status_code != 200:
             raise HTTPException(
                 status_code=res.status_code,
-                detail=f"Erro ao verificar status na fal.ai: {res.text}"
+                detail=f"Erro ao verificar status na Replicate: {res.text}"
             )
 
         data = res.json()
-        fal_status = data.get("status", "")
+        replicate_status = data.get("status", "")
 
-        if fal_status == "COMPLETED":
-            result_url = f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}/requests/{task_id}"
-            result_res = await client.get(result_url, headers=_fal_headers())
+        if replicate_status == "succeeded":
+            output = data.get("output", "")
+            # A Replicate às vezes retorna uma URL string direto, às
+            # vezes uma lista com uma URL dentro — trata os dois casos.
+            video_url = output[0] if isinstance(output, list) and output else output
 
-            if result_res.status_code != 200:
+            if not video_url or not isinstance(video_url, str):
                 return CenarioStatusResponse(
                     task_id=task_id,
                     status="error",
-                    error=f"Erro ao buscar resultado final: {result_res.text}",
-                )
-
-            result_data = result_res.json()
-            video_url = result_data.get("video", {}).get("url", "")
-
-            if not video_url:
-                return CenarioStatusResponse(
-                    task_id=task_id,
-                    status="error",
-                    error="fal.ai retornou COMPLETED mas sem video_url",
+                    error="Replicate retornou succeeded mas sem output de vídeo válido",
                 )
 
             return CenarioStatusResponse(
@@ -162,12 +152,13 @@ async def get_cenario_status(task_id: str):
                 video_url=video_url,
             )
 
-        if fal_status in ("IN_QUEUE", "IN_PROGRESS"):
+        if replicate_status in ("starting", "processing"):
             return CenarioStatusResponse(task_id=task_id, status="processing")
 
-        # Status desconhecido ou de erro (ex: "FAILED")
+        # "failed" ou "canceled"
+        error_msg = data.get("error") or f"Replicate retornou status: {replicate_status}"
         return CenarioStatusResponse(
             task_id=task_id,
             status="error",
-            error=f"fal.ai retornou status inesperado: {fal_status}",
+            error=str(error_msg),
         )
