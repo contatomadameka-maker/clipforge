@@ -1,43 +1,42 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/cenario.py
-# Geração de cenário via Kling AI (text-to-VIDEO, não mais imagem)
+# Geração de cenário via Kling AI — agora através da fal.ai
 # ─────────────────────────────────────────────────────────────
+#
+# Por quê fal.ai em vez da Kling direto?
+# A API direta da Kling (api-singapore.klingai.com) se mostrou instável
+# em produção: tasks que ficavam presas em "processing" indefinidamente,
+# e uma consulta de status que devolvia respostas com timestamp
+# congelado (indício de cache num proxy no meio do caminho), mesmo com
+# o vídeo sendo de fato processado e consumindo crédito do lado da Kling.
+#
+# fal.ai hospeda o mesmo modelo Kling atrás de uma API de fila própria,
+# bem documentada e sem esses problemas de infraestrutura regional.
+# O contrato exposto pro resto do projeto (POST /generate → GET /status)
+# continua idêntico — o canvas.tsx não precisa de nenhuma mudança.
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from config import get_settings
 import httpx
-import jwt
-import time
 
 router = APIRouter()
 settings = get_settings()
 
-# Mesmo domínio que já validamos funcionando na geração de vídeo dos
-# templates de produto (api.klingai.com, sem o "-singapore", dava erro
-# de região em alguns testes anteriores nesse projeto)
-KLING_API_URL = "https://api-singapore.klingai.com"
+FAL_QUEUE_URL = "https://queue.fal.run"
+
+# Endpoint "standard" do Kling 1.6 na fal — bom equilíbrio de custo x
+# qualidade pra cenário de fundo (não precisa do tier "master"/"pro",
+# que é bem mais caro e voltado a cenas com protagonismo próprio).
+# Documentação: https://fal.ai/models/fal-ai/kling-video/v1.6/standard/text-to-video/api
+FAL_MODEL_ID = "fal-ai/kling-video/v1.6/standard/text-to-video"
 
 
-def get_kling_token() -> str:
-    """Gera JWT token para autenticação no Kling AI, se a key tiver o
-    formato AccessKeyID:AccessKeySecret. Se não tiver ':', usa a key
-    direto como Bearer (é o caso da sua conta atual, já confirmado
-    funcionando nos testes)."""
-    parts = settings.kling_api_key.split(":")
-    if len(parts) == 2:
-        access_key_id, access_key_secret = parts
-    else:
-        return settings.kling_api_key
-
-    now = int(time.time())
-    payload = {
-        "iss": access_key_id,
-        "exp": now + 1800,  # 30 min
-        "nbf": now - 5,
+def _fal_headers() -> dict:
+    return {
+        "Authorization": f"Key {settings.fal_api_key}",
+        "Content-Type": "application/json",
     }
-    token = jwt.encode(payload, access_key_secret, algorithm="HS256")
-    return token
 
 
 class GenerateCenarioRequest(BaseModel):
@@ -79,98 +78,82 @@ async def get_templates():
 
 @router.post("/generate", response_model=CenarioResponse)
 async def generate_cenario(req: GenerateCenarioRequest):
-    """Dispara a geração de VÍDEO de cenário no Kling AI e retorna
-    IMEDIATAMENTE com o task_id (status='processing').
-
-    Antes esse endpoint ficava até 150s fazendo polling no Kling dentro
-    da própria requisição HTTP, e o Render (ou proxy na frente) cortava
-    a conexão antes disso, gerando 408 Request Timeout no frontend.
-
-    Agora segue o MESMO padrão já validado no heygen.py: generate só
-    inicia o job e devolve um ID; o frontend consulta /cenario/status/{task_id}
-    a cada poucos segundos até o vídeo terminar.
-    """
+    """Submete o job de vídeo na fila da fal.ai e retorna IMEDIATAMENTE
+    com o request_id (status='processing'). O frontend consulta
+    /cenario/status/{task_id} em polling até o vídeo terminar — mesmo
+    padrão já usado no heygen.py."""
 
     enriched_prompt = f"{req.prompt}, professional product video background, high quality, cinematic, no people, no text, static camera, subtle ambient movement"
 
-    headers = {
-        "Authorization": f"Bearer {get_kling_token()}",
-        "Content-Type": "application/json",
-    }
-
     payload = {
-        "model_name": "kling-v1",
         "prompt": enriched_prompt,
         "negative_prompt": req.negative_prompt,
         "duration": "5",
         "aspect_ratio": req.aspect_ratio,
-        "mode": "std",
     }
 
     async with httpx.AsyncClient(timeout=30) as client:
         res = await client.post(
-            f"{KLING_API_URL}/v1/videos/text2video",
-            headers=headers,
+            f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}",
+            headers=_fal_headers(),
             json=payload,
         )
 
-        if res.status_code != 200:
+        if res.status_code not in (200, 201):
             raise HTTPException(
                 status_code=res.status_code,
-                detail=f"Erro Kling: {res.text}"
+                detail=f"Erro fal.ai: {res.text}"
             )
 
         data = res.json()
-        task_id = data.get("data", {}).get("task_id", "")
+        request_id = data.get("request_id", "")
 
-        if not task_id:
-            raise HTTPException(status_code=500, detail="Kling não retornou task_id")
+        if not request_id:
+            raise HTTPException(status_code=500, detail="fal.ai não retornou request_id")
 
-        return CenarioResponse(task_id=task_id, status="processing")
+        return CenarioResponse(task_id=request_id, status="processing")
 
 
 @router.get("/status/{task_id}", response_model=CenarioStatusResponse)
 async def get_cenario_status(task_id: str):
-    """Consulta o status do vídeo no Kling AI. O frontend chama esse
-    endpoint em polling (a cada ~5s) até status == 'done' ou 'error' —
-    mesmo padrão do GET /heygen/status/{video_id}."""
+    """Consulta o status na fila da fal.ai. Quando status == COMPLETED,
+    busca o resultado final (video_url) numa segunda chamada — é assim
+    que a API de fila da fal.ai funciona (status e resultado são
+    endpoints separados)."""
 
-    headers = {
-        "Authorization": f"Bearer {get_kling_token()}",
-        "Content-Type": "application/json",
-    }
+    status_url = f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}/requests/{task_id}/status"
 
     async with httpx.AsyncClient(timeout=30) as client:
-        res = await client.get(
-            f"{KLING_API_URL}/v1/videos/text2video/{task_id}",
-            headers=headers,
-        )
+        res = await client.get(status_url, headers=_fal_headers())
 
         if res.status_code != 200:
             raise HTTPException(
                 status_code=res.status_code,
-                detail=f"Erro ao verificar status no Kling: {res.text}"
+                detail=f"Erro ao verificar status na fal.ai: {res.text}"
             )
 
-        raw = res.json()
-        # LOG TEMPORÁRIO — remover depois de confirmar o formato real da
-        # resposta do Kling. Isso aparece nos logs do Render (não no
-        # navegador), pra descobrir por que task_status nunca chega a
-        # "succeed" mesmo com HTTP 200 em todas as tentativas.
-        print(f"[Kling status raw] task_id={task_id} response={raw}")
+        data = res.json()
+        fal_status = data.get("status", "")
 
-        data = raw.get("data", {})
-        task_status = data.get("task_status", "processing")
+        if fal_status == "COMPLETED":
+            result_url = f"{FAL_QUEUE_URL}/{FAL_MODEL_ID}/requests/{task_id}"
+            result_res = await client.get(result_url, headers=_fal_headers())
 
-        if task_status == "succeed":
-            videos = data.get("task_result", {}).get("videos", [])
-            video_url = videos[0].get("url", "") if videos else ""
+            if result_res.status_code != 200:
+                return CenarioStatusResponse(
+                    task_id=task_id,
+                    status="error",
+                    error=f"Erro ao buscar resultado final: {result_res.text}",
+                )
+
+            result_data = result_res.json()
+            video_url = result_data.get("video", {}).get("url", "")
 
             if not video_url:
                 return CenarioStatusResponse(
                     task_id=task_id,
                     status="error",
-                    error="Kling retornou sucesso mas sem video_url",
+                    error="fal.ai retornou COMPLETED mas sem video_url",
                 )
 
             return CenarioStatusResponse(
@@ -179,12 +162,12 @@ async def get_cenario_status(task_id: str):
                 video_url=video_url,
             )
 
-        if task_status == "failed":
-            return CenarioStatusResponse(
-                task_id=task_id,
-                status="error",
-                error="Kling falhou ao gerar vídeo",
-            )
+        if fal_status in ("IN_QUEUE", "IN_PROGRESS"):
+            return CenarioStatusResponse(task_id=task_id, status="processing")
 
-        # "processing" ou "submitted" — ainda não terminou
-        return CenarioStatusResponse(task_id=task_id, status="processing")
+        # Status desconhecido ou de erro (ex: "FAILED")
+        return CenarioStatusResponse(
+            task_id=task_id,
+            status="error",
+            error=f"fal.ai retornou status inesperado: {fal_status}",
+        )
