@@ -26,37 +26,37 @@ router = APIRouter()
 settings = get_settings()
 
 # ─────────────────────────────────────────────────────────────
-# IMPORTANTE: os valores de "product_id" abaixo são PLACEHOLDER.
-# Depois de criar os 4 produtos/ofertas no painel da Cakto, troque
-# cada "product_id" pelo ID real (aparece na URL do produto ou no
-# payload de teste do webhook) e cada "checkout_url" pela URL de
-# checkout real gerada pela Cakto pra cada oferta.
+# IDs extraídos do final de cada checkout_url (ex: 37qk5nq_969571 →
+# 969571). Essa é uma DEDUÇÃO baseada no formato da URL, ainda não
+# confirmada oficialmente pela Cakto — validar assim que a primeira
+# compra de teste cair no webhook (conferir nos logs do Render se
+# o campo data.product.id do payload bate com esses números).
 # ─────────────────────────────────────────────────────────────
 PLANS = {
     "starter": {
-        "product_id": "TROCAR_PELO_ID_REAL_STARTER",
-        "checkout_url": "https://pay.cakto.com.br/TROCAR_STARTER",
+        "product_id": "969571",
+        "checkout_url": "https://pay.cakto.com.br/37qk5nq_969571",
         "credits": 500,
         "name": "Starter",
         "price": 49,
     },
     "pro": {
-        "product_id": "TROCAR_PELO_ID_REAL_PRO",
-        "checkout_url": "https://pay.cakto.com.br/TROCAR_PRO",
+        "product_id": "969606",
+        "checkout_url": "https://pay.cakto.com.br/33f66ou_969606",
         "credits": 1100,
         "name": "Pro",
         "price": 97,
     },
     "creator": {
-        "product_id": "TROCAR_PELO_ID_REAL_CREATOR",
-        "checkout_url": "https://pay.cakto.com.br/TROCAR_CREATOR",
+        "product_id": "969646",
+        "checkout_url": "https://pay.cakto.com.br/x7zi962_969646",
         "credits": 2500,
         "name": "Creator",
         "price": 197,
     },
     "agency": {
-        "product_id": "TROCAR_PELO_ID_REAL_AGENCY",
-        "checkout_url": "https://pay.cakto.com.br/TROCAR_AGENCY",
+        "product_id": "969649",
+        "checkout_url": "https://pay.cakto.com.br/38dwjqd_969649",
         "credits": 5000,
         "name": "Agency",
         "price": 349,
