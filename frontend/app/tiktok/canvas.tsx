@@ -73,14 +73,15 @@ const GERADOR_TIPOS: Record<string, { label: string; desc: string; credits: numb
   video_produto: { label: "Vídeo de Produto", desc: "Produto + persona (foto ou texto) + cena + fala, tudo em 1 geração", credits: 60 },
 };
 
-const CREDIT_COST: Record<string, number> = { "5": 45, "10": 90, "15": 135 };
-// 480p é o padrão (custo real ~R$4,16 pra 10s) — 720p/1080p custam mais na
-// Replicate (quase o dobro), então cobramos sobretaxa pra refletir isso.
-const RESOLUTION_SURCHARGE: Record<string, number> = { "480p": 0, "720p": 20, "1080p": 35 };
+// Créditos por segundo, por resolução — 720p custa 2,25x mais na
+// Replicate ($0,18/s vs $0,08/s em 480p), então a taxa de créditos
+// segue essa mesma proporção pra manter a margem consistente.
+// 1080p removido por ora — sem confirmação de preço real na Replicate
+// pro Seedance 2.0 nessa resolução.
+const RESOLUTION_RATE: Record<string, number> = { "480p": 12, "720p": 27 };
 function computeCost(duration: string, resolution: string): number {
-  const base = CREDIT_COST[duration] || 60;
-  const surcharge = RESOLUTION_SURCHARGE[resolution] ?? 0;
-  return base + surcharge;
+  const rate = RESOLUTION_RATE[resolution] ?? RESOLUTION_RATE["480p"];
+  return parseInt(duration || "10") * rate;
 }
 
 const handleStyle = {
@@ -594,20 +595,20 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
       <div>
         <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Resolução</label>
         <div className="flex gap-2">
-          {["480p", "720p", "1080p"].map(q => {
-            const surcharge = RESOLUTION_SURCHARGE[q] ?? 0;
+          {["480p", "720p"].map(q => {
+            const rate = RESOLUTION_RATE[q];
             const selected = (node.data.resolution || "480p") === q;
             return (
               <button key={q} type="button" onClick={() => update({ resolution: q })}
                 className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none flex flex-col items-center gap-0.5"
                 style={selected ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
                 <span>{q}</span>
-                <span className="text-[9px] opacity-70">{surcharge > 0 ? `+${surcharge} cr` : "incluso"}</span>
+                <span className="text-[9px] opacity-70">{rate} cr/s</span>
               </button>
             );
           })}
         </div>
-        <p className="text-[10px] text-[#55556a] mt-1">480p já fica ótimo pra TikTok/Reels (compressão do app disfarça a diferença). 720p/1080p têm custo extra real de processamento.</p>
+        <p className="text-[10px] text-[#55556a] mt-1">480p já fica ótimo pra TikTok/Reels (compressão do app disfarça a diferença). 720p custa mais porque processa mais dado de verdade.</p>
       </div>
     </div>
   );
@@ -654,8 +655,7 @@ function ConfirmGenerateModal({ cost, duration, resolution, haveCredits, onConfi
   cost: number; duration: string; resolution: string; haveCredits: number;
   onConfirm: () => void; onCancel: () => void;
 }) {
-  const surcharge = RESOLUTION_SURCHARGE[resolution] ?? 0;
-  const base = CREDIT_COST[duration] || 60;
+  const rate = RESOLUTION_RATE[resolution] ?? RESOLUTION_RATE["480p"];
   return (
     <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }} onClick={onCancel}>
       <div className="rounded-2xl w-full max-w-sm mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
@@ -670,11 +670,11 @@ function ConfirmGenerateModal({ cost, duration, resolution, haveCredits, onConfi
         <div className="px-6 py-5 flex flex-col gap-3">
           <div className="flex items-center justify-between text-[12px]">
             <span className="text-[#9090a8]">Duração</span>
-            <span className="text-[#f0f0f5] font-medium">{duration}s ({base} cr)</span>
+            <span className="text-[#f0f0f5] font-medium">{duration}s</span>
           </div>
           <div className="flex items-center justify-between text-[12px]">
             <span className="text-[#9090a8]">Resolução</span>
-            <span className="text-[#f0f0f5] font-medium">{resolution} {surcharge > 0 ? `(+${surcharge} cr)` : "(incluso)"}</span>
+            <span className="text-[#f0f0f5] font-medium">{resolution} ({rate} cr/s)</span>
           </div>
           <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
           <div className="flex items-center justify-between text-[13px]">
