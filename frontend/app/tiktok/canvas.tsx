@@ -621,6 +621,8 @@ export default function TikTokCanvasInner() {
   const [rfInstance, setRfInstance] = useState<any>(null);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
+  const [pendingConnection, setPendingConnection] = useState<{ sourceId: string; position: { x: number; y: number } } | null>(null);
+  const connectingNodeId = useRef<string | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [userCredits, setUserCredits] = useState<number>(50);
   const [creditModal, setCreditModal] = useState<{ needed: number; have: number } | null>(null);
@@ -640,6 +642,26 @@ export default function TikTokCanvasInner() {
 
   const onConnect = useCallback((params: Connection) => setEdges(eds => addEdge({ ...params, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds)), [setEdges]);
 
+  const onConnectStart = useCallback((_: any, { nodeId }: { nodeId: string | null }) => {
+    connectingNodeId.current = nodeId;
+  }, []);
+
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const sourceId = connectingNodeId.current;
+    connectingNodeId.current = null;
+    if (!sourceId || !rfInstance || !reactFlowWrapper.current) return;
+
+    const targetIsPane = (event.target as HTMLElement)?.classList?.contains("react-flow__pane");
+    if (!targetIsPane) return; // soltou em cima de um nó existente — deixa o onConnect normal cuidar
+
+    const clientX = "touches" in event ? event.touches[0]?.clientX : (event as MouseEvent).clientX;
+    const clientY = "touches" in event ? event.touches[0]?.clientY : (event as MouseEvent).clientY;
+    const flowPos = rfInstance.screenToFlowPosition({ x: clientX, y: clientY });
+
+    setPendingConnection({ sourceId, position: flowPos });
+    setShowAddModal(true);
+  }, [rfInstance]);
+
   function addNode(type: BlockType, role?: MidiaRole, position?: { x: number; y: number }) {
     const id = nextId();
     const pos = position || { x: 300 + Math.random() * 200, y: 100 + Math.random() * 300 };
@@ -649,6 +671,11 @@ export default function TikTokCanvasInner() {
     setNodes(nds => [...nds, { id, type, position: pos, data: base }]);
     setSelectedNodeId(id);
     setShowAddModal(false);
+
+    if (pendingConnection) {
+      setEdges(eds => addEdge({ id: `e-${pendingConnection.sourceId}-${id}`, source: pendingConnection.sourceId, target: id, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds));
+      setPendingConnection(null);
+    }
   }
 
   function updateNodeData(id: string, patch: Partial<BlockData>) {
@@ -783,17 +810,9 @@ export default function TikTokCanvasInner() {
           <div><p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p><p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram</p></div>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => setShowLibrary(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-            📁 Biblioteca
-          </button>
           <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
             <span className="font-semibold text-[#f0f0f5]">{userCredits.toLocaleString()}</span> créditos
           </div>
-          <button type="button" onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-2 px-4 py-2 rounded-[8px] text-sm font-semibold cursor-pointer border-none"
-            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}>
-            + Adicionar
-          </button>
         </div>
       </div>
 
@@ -812,16 +831,53 @@ export default function TikTokCanvasInner() {
         </div>
       )}
 
-      {showAddModal && <AddComponentModal onAdd={(type, role) => addNode(type, role)} onClose={() => setShowAddModal(false)} />}
+      {showAddModal && <AddComponentModal onAdd={(type, role) => addNode(type, role, pendingConnection?.position)} onClose={() => { setShowAddModal(false); setPendingConnection(null); }} />}
 
       <div className="flex-1 relative overflow-hidden" ref={reactFlowWrapper} style={{ height: "calc(100vh - 112px)" }} onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
-        <div style={{ marginRight: (selectedNode || showLibrary) ? "288px" : "0", height: "100%" }}>
+
+        {/* Barra lateral persistente — sempre visível, igual ao PipClip */}
+        <div className="absolute top-1/2 left-3 -translate-y-1/2 flex flex-col gap-2 z-40">
+          <button type="button" onClick={() => setShowLibrary(v => !v)} title="Biblioteca de Mídia"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-base cursor-pointer border-none transition-all hover:scale-110"
+            style={{ background: showLibrary ? "rgba(124,109,245,0.25)" : "rgba(255,255,255,0.06)", border: `0.5px solid ${showLibrary ? "#7c6df5" : "rgba(255,255,255,0.1)"}`, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
+            📁
+          </button>
+          <label title="Upload rápido de produto"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-base cursor-pointer border-none transition-all hover:scale-110"
+            style={{ background: "rgba(255,255,255,0.06)", border: "0.5px solid rgba(255,255,255,0.1)", boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}>
+            ⬆️
+            <input type="file" accept="image/*" className="hidden" onChange={async e => {
+              const file = e.target.files?.[0]; if (!file) return;
+              const id = nextId();
+              setNodes(nds => [...nds, { id, type: "midia", position: { x: 300 + Math.random() * 200, y: 150 + Math.random() * 200 }, data: { type: "midia", role: "produto", label: "midia", uploading: true } }]);
+              try {
+                const fd = new FormData(); fd.append("file", file);
+                const res = await fetch(`${API}/storage/upload/product-image`, { method: "POST", body: fd });
+                const data = await res.json();
+                updateNodeData(id, { imageUrl: data.url, uploading: false });
+              } catch {
+                const reader = new FileReader();
+                reader.onload = ev => updateNodeData(id, { imageUrl: ev.target?.result as string, uploading: false });
+                reader.readAsDataURL(file);
+              }
+            }} />
+          </label>
+          <button type="button" onClick={() => { setPendingConnection(null); setShowAddModal(true); }} title="Adicionar componente"
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-lg cursor-pointer border-none transition-all hover:scale-110"
+            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", boxShadow: "0 2px 8px rgba(124,109,245,0.4)" }}>
+            +
+          </button>
+        </div>
+
+        <div style={{ marginLeft: "64px", marginRight: (selectedNode || showLibrary) ? "288px" : "0", height: "100%" }}>
           <ReactFlow
             nodes={nodesWithConfig}
             edges={edges}
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
+            onConnectStart={onConnectStart}
+            onConnectEnd={onConnectEnd}
             nodeTypes={nodeTypes}
             onInit={setRfInstance}
             onNodeClick={(_, node) => setSelectedNodeId(node.id)}
