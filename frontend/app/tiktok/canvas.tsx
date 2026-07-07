@@ -582,6 +582,67 @@ function ConfigPanel({ node, onUpdate, onClose }: { node: Node<BlockData>; onUpd
   );
 }
 
+// ── Modal de confirmação antes de gerar (substitui window.confirm) ──
+
+function ConfirmGenerateModal({ cost, duration, resolution, haveCredits, onConfirm, onCancel }: {
+  cost: number; duration: string; resolution: string; haveCredits: number;
+  onConfirm: () => void; onCancel: () => void;
+}) {
+  const surcharge = RESOLUTION_SURCHARGE[resolution] ?? 0;
+  const base = CREDIT_COST[duration] || 60;
+  return (
+    <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }} onClick={onCancel}>
+      <div className="rounded-2xl w-full max-w-sm mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-6 pb-5 flex flex-col items-center text-center" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl mb-3" style={{ background: "linear-gradient(135deg,rgba(139,124,248,0.2),rgba(124,109,245,0.2))", border: "0.5px solid rgba(124,109,245,0.3)" }}>
+            ✨
+          </div>
+          <p className="text-base font-bold text-[#f0f0f5]">Gerar vídeo agora?</p>
+          <p className="text-[11px] text-[#55556a] mt-1">Confirme os detalhes antes de consumir créditos</p>
+        </div>
+
+        <div className="px-6 py-5 flex flex-col gap-3">
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-[#9090a8]">Duração</span>
+            <span className="text-[#f0f0f5] font-medium">{duration}s ({base} cr)</span>
+          </div>
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-[#9090a8]">Resolução</span>
+            <span className="text-[#f0f0f5] font-medium">{resolution} {surcharge > 0 ? `(+${surcharge} cr)` : "(incluso)"}</span>
+          </div>
+          <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+          <div className="flex items-center justify-between text-[13px]">
+            <span className="text-[#9090a8]">Custo total</span>
+            <span className="font-bold" style={{ color: "#f59e0b" }}>{cost} créditos</span>
+          </div>
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-[#9090a8]">Saldo atual</span>
+            <span className="text-[#f0f0f5]">{haveCredits.toLocaleString()}</span>
+          </div>
+          <div className="flex items-center justify-between text-[12px]">
+            <span className="text-[#9090a8]">Saldo após gerar</span>
+            <span className="text-[#3ecf8e] font-medium">{(haveCredits - cost).toLocaleString()}</span>
+          </div>
+        </div>
+
+        <div className="px-6 pb-6 flex flex-col gap-2">
+          <button type="button" onClick={onConfirm}
+            className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer border-none"
+            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Gerar vídeo ({cost} cr)
+          </button>
+          <button type="button" onClick={onCancel}
+            className="w-full h-10 rounded-[10px] text-sm cursor-pointer border-none"
+            style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Modal "Adicionar Componente" ────────────────────────────────
 
 function AddComponentModal({ onAdd, onClose }: { onAdd: (type: BlockType, role?: MidiaRole) => void; onClose: () => void }) {
@@ -666,13 +727,16 @@ export default function TikTokCanvasInner() {
   const connectingNodeId = useRef<string | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [userCredits, setUserCredits] = useState<number>(50);
+  const [userId, setUserId] = useState<string | null>(null);
   const [creditModal, setCreditModal] = useState<{ needed: number; have: number } | null>(null);
+  const [confirmGenerate, setConfirmGenerate] = useState<{ geradorId: string; cost: number; duration: string; resolution: string } | null>(null);
 
   useEffect(() => {
     try {
       const sb = getSupabase();
       sb.auth.getUser().then(({ data }: any) => {
         if (data?.user) {
+          setUserId(data.user.id);
           fetch(`${API}/credits/${data.user.id}`).then(r => r.json()).then(d => { if (d.balance !== undefined) setUserCredits(d.balance); }).catch(() => {});
         }
       });
@@ -721,7 +785,38 @@ export default function TikTokCanvasInner() {
     setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
   }
 
-  async function handleGenerate(geradorId: string) {
+  function handleGenerate(geradorId: string) {
+    const geradorNode = nodes.find(n => n.id === geradorId);
+    if (!geradorNode) return;
+
+    const connectedEdges = edges.filter(e => e.target === geradorId);
+    let productImageUrl = "";
+    let personaImageUrl = "";
+    for (const edge of connectedEdges) {
+      const source = nodes.find(n => n.id === edge.source);
+      if (!source || source.data.type !== "midia") continue;
+      if (source.data.role === "produto") productImageUrl = (source.data.imageUrl as string) || "";
+      if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
+    }
+
+    const personaDescription = (geradorNode.data.personaDescription as string) || "";
+    const dialogue = (geradorNode.data.dialogue as string) || "";
+    const duration = (geradorNode.data.duration as string) || "10";
+    const resolution = (geradorNode.data.resolution as string) || "480p";
+    const cost = computeCost(duration, resolution);
+
+    if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
+    if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
+    if (!personaImageUrl && !personaDescription) { alert("Conecte uma foto de Persona OU descreva a persona em texto no Gerador!"); return; }
+
+    if (cost > userCredits) { setCreditModal({ needed: cost, have: userCredits }); return; }
+
+    // Abre o modal de confirmação bonito em vez do window.confirm nativo
+    setConfirmGenerate({ geradorId, cost, duration, resolution });
+  }
+
+  async function executeGenerate(geradorId: string, cost: number) {
+    setConfirmGenerate(null);
     const geradorNode = nodes.find(n => n.id === geradorId);
     if (!geradorNode) return;
 
@@ -740,20 +835,55 @@ export default function TikTokCanvasInner() {
     const dialogue = (geradorNode.data.dialogue as string) || "";
     const duration = (geradorNode.data.duration as string) || "10";
     const resolution = (geradorNode.data.resolution as string) || "480p";
-    const cost = computeCost(duration, resolution);
 
-    if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
-    if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
-    if (!personaImageUrl && !personaDescription) { alert("Conecte uma foto de Persona OU descreva a persona em texto no Gerador!"); return; }
+    if (!userId) { alert("Não foi possível identificar seu usuário. Faça login novamente."); return; }
 
-    if (cost > userCredits) { setCreditModal({ needed: cost, have: userCredits }); return; }
-    if (!window.confirm(`Gerar vídeo por ${cost} créditos?\nSaldo atual: ${userCredits}\nSaldo após: ${userCredits - cost}`)) return;
+    // 1) DÉBITO — acontece ANTES de chamar a API de geração, igual definido no Brief
+    let debitOk = false;
+    try {
+      const debitRes = await fetch(`${API}/credits/debit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user_id: userId,
+          amount: cost,
+          description: `Vídeo de Produto — ${duration}s ${resolution}`,
+        }),
+      });
+      if (!debitRes.ok) {
+        const err = await debitRes.json().catch(() => ({}));
+        if (debitRes.status === 402) {
+          setCreditModal({ needed: cost, have: userCredits });
+        } else {
+          alert(`Erro ao debitar créditos: ${err.detail || "erro desconhecido"}`);
+        }
+        return;
+      }
+      const debitData = await debitRes.json();
+      setUserCredits(debitData.balance);
+      debitOk = true;
+    } catch (e: any) {
+      alert(`Erro ao debitar créditos: ${e.message}`);
+      return;
+    }
 
     // Cria o nó Resultado conectado
     const resultId = nextId();
     const resultPos = { x: geradorNode.position.x + 320, y: geradorNode.position.y };
     setNodes(nds => [...nds, { id: resultId, type: "resultado", position: resultPos, data: { type: "resultado", label: "Resultado", status: "processing", progress: 10 } }]);
     setEdges(eds => addEdge({ id: `e-${geradorId}-${resultId}`, source: geradorId, target: resultId, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds));
+
+    async function refund(motivo: string) {
+      try {
+        const refundRes = await fetch(`${API}/credits/refund`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, amount: cost, description: `Estorno — ${motivo}` }),
+        });
+        const refundData = await refundRes.json().catch(() => null);
+        if (refundData?.balance !== undefined) setUserCredits(refundData.balance);
+      } catch {}
+    }
 
     try {
       const res = await fetch(`${API}/seedance/generate`, {
@@ -791,11 +921,15 @@ export default function TikTokCanvasInner() {
           } else if (statusData.status === "error" || attempts > maxAttempts) {
             clearInterval(poll);
             updateNodeData(resultId, { status: "error", errorMsg: statusData.error || "Timeout aguardando geração" });
+            // 2) ESTORNO — geração falhou depois de já ter debitado
+            await refund(statusData.error || "timeout na geração");
           }
         } catch { clearInterval(poll); }
       }, 5000);
     } catch (e: any) {
       updateNodeData(resultId, { status: "error", errorMsg: e.message });
+      // 2) ESTORNO — falha ao sequer iniciar a geração
+      await refund(e.message);
     }
   }
 
@@ -869,6 +1003,17 @@ export default function TikTokCanvasInner() {
             </div>
           </div>
         </div>
+      )}
+
+      {confirmGenerate && (
+        <ConfirmGenerateModal
+          cost={confirmGenerate.cost}
+          duration={confirmGenerate.duration}
+          resolution={confirmGenerate.resolution}
+          haveCredits={userCredits}
+          onConfirm={() => executeGenerate(confirmGenerate.geradorId, confirmGenerate.cost)}
+          onCancel={() => setConfirmGenerate(null)}
+        />
       )}
 
       {showAddModal && <AddComponentModal onAdd={(type, role) => addNode(type, role, pendingConnection?.position)} onClose={() => { setShowAddModal(false); setPendingConnection(null); }} />}
