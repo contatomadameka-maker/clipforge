@@ -74,6 +74,14 @@ const GERADOR_TIPOS: Record<string, { label: string; desc: string; credits: numb
 };
 
 const CREDIT_COST: Record<string, number> = { "5": 30, "10": 60, "15": 90 };
+// 480p é o padrão (custo real ~R$4,16 pra 10s) — 720p/1080p custam mais na
+// Replicate (quase o dobro), então cobramos sobretaxa pra refletir isso.
+const RESOLUTION_SURCHARGE: Record<string, number> = { "480p": 0, "720p": 20, "1080p": 35 };
+function computeCost(duration: string, resolution: string): number {
+  const base = CREDIT_COST[duration] || 60;
+  const surcharge = RESOLUTION_SURCHARGE[resolution] ?? 0;
+  return base + surcharge;
+}
 
 const handleStyle = {
   width: 14, height: 14, background: "#7c6df5",
@@ -144,7 +152,8 @@ function GeradorNode({ data, selected }: NodeProps) {
   const d = data as BlockData;
   const tipo = GERADOR_TIPOS[d.tipo || "video_produto"];
   const dur = d.duration || "10";
-  const cost = CREDIT_COST[dur] || 60;
+  const res = d.resolution || "480p";
+  const cost = computeCost(dur, res);
 
   return (
     <>
@@ -190,7 +199,7 @@ function GeradorNode({ data, selected }: NodeProps) {
           <div className="flex items-center gap-1.5 mt-1">
             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{dur}s</span>
             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{d.aspectRatio || "9:16"}</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{d.resolution || "720p"}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{d.resolution || "480p"}</span>
           </div>
           <button type="button"
             onClick={e => { e.stopPropagation(); (data as any).onGenerate?.(); }}
@@ -436,7 +445,7 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
         <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tipo</label>
         <div className="rounded-[8px] px-3 py-2.5 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
           <span className="text-sm text-[#f0f0f5]">Vídeo de Produto</span>
-          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{CREDIT_COST[node.data.duration || "10"] || 60} cr</span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{computeCost(node.data.duration || "10", node.data.resolution || "480p")} cr</span>
         </div>
         <p className="text-[10px] text-[#55556a] mt-1">Conecte um bloco Mídia (Produto) ao Gerador. Persona é opcional — se não conectar foto, descreva em texto abaixo.</p>
       </div>
@@ -496,7 +505,7 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
       <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
 
       <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Duração: {node.data.duration || "10"}s ({CREDIT_COST[node.data.duration || "10"]} cr)</label>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Duração: {node.data.duration || "10"}s ({computeCost(node.data.duration || "10", node.data.resolution || "480p")} cr)</label>
         <input type="range" min={5} max={15} step={5} value={parseInt(node.data.duration || "10")}
           onChange={e => update({ duration: e.target.value })}
           className="w-full" />
@@ -519,14 +528,20 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
       <div>
         <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Resolução</label>
         <div className="flex gap-2">
-          {["720p", "1080p"].map(q => (
-            <button key={q} type="button" onClick={() => update({ resolution: q })}
-              className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none"
-              style={node.data.resolution === q ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-              {q}
-            </button>
-          ))}
+          {["480p", "720p", "1080p"].map(q => {
+            const surcharge = RESOLUTION_SURCHARGE[q] ?? 0;
+            const selected = (node.data.resolution || "480p") === q;
+            return (
+              <button key={q} type="button" onClick={() => update({ resolution: q })}
+                className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none flex flex-col items-center gap-0.5"
+                style={selected ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <span>{q}</span>
+                <span className="text-[9px] opacity-70">{surcharge > 0 ? `+${surcharge} cr` : "incluso"}</span>
+              </button>
+            );
+          })}
         </div>
+        <p className="text-[10px] text-[#55556a] mt-1">480p já fica ótimo pra TikTok/Reels (compressão do app disfarça a diferença). 720p/1080p têm custo extra real de processamento.</p>
       </div>
     </div>
   );
@@ -691,7 +706,7 @@ export default function TikTokCanvasInner() {
     const pos = position || { x: 300 + Math.random() * 200, y: 100 + Math.random() * 300 };
     const base: BlockData = { type, label: type };
     if (type === "midia") { base.role = role; }
-    if (type === "gerador") { base.tipo = "video_produto"; base.duration = "10"; base.aspectRatio = "9:16"; base.resolution = "720p"; }
+    if (type === "gerador") { base.tipo = "video_produto"; base.duration = "10"; base.aspectRatio = "9:16"; base.resolution = "480p"; }
     setNodes(nds => [...nds, { id, type, position: pos, data: base }]);
     setSelectedNodeId(id);
     setShowAddModal(false);
@@ -724,7 +739,8 @@ export default function TikTokCanvasInner() {
     const scenePrompt = (geradorNode.data.scenePrompt as string) || "";
     const dialogue = (geradorNode.data.dialogue as string) || "";
     const duration = (geradorNode.data.duration as string) || "10";
-    const cost = CREDIT_COST[duration] || 60;
+    const resolution = (geradorNode.data.resolution as string) || "480p";
+    const cost = computeCost(duration, resolution);
 
     if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
     if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
@@ -751,7 +767,7 @@ export default function TikTokCanvasInner() {
           dialogue,
           aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
           duration,
-          resolution: (geradorNode.data.resolution as string) || "720p",
+          resolution,
         }),
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Erro ao iniciar geração"); }
