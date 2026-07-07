@@ -1,6 +1,6 @@
 "use client";
 
-// frontend/app/settings/page.tsx
+// frontend/app/dashboard/settings/page.tsx
 // Página de configurações com planos e pagamento
 
 import { useState, useEffect } from "react";
@@ -13,28 +13,37 @@ const PLANS = [
     id: "starter",
     name: "Starter",
     price: 49,
-    credits: 200,
+    credits: 500,
     color: "#7c6df5",
     badge: null,
-    features: ["200 créditos/mês", "Criativo de Produto", "Suporte por email"],
+    features: ["500 créditos/mês", "Criativo de Produto", "Suporte por email"],
   },
   {
     id: "pro",
     name: "Pro",
     price: 97,
-    credits: 600,
+    credits: 1100,
     color: "#3ecf8e",
     badge: "Mais popular",
-    features: ["600 créditos/mês", "Criativo + Studio YouTube", "Prioridade na fila", "Suporte prioritário"],
+    features: ["1.100 créditos/mês", "Criativo + Studio YouTube", "Prioridade na fila", "Suporte prioritário"],
+  },
+  {
+    id: "creator",
+    name: "Creator",
+    price: 197,
+    credits: 2500,
+    color: "#60a5fa",
+    badge: null,
+    features: ["2.500 créditos/mês", "Tudo do Pro", "Avatares próprios", "Suporte dedicado"],
   },
   {
     id: "agency",
     name: "Agency",
-    price: 197,
-    credits: 1500,
+    price: 349,
+    credits: 5000,
     color: "#f59e0b",
     badge: null,
-    features: ["1.500 créditos/mês", "Tudo do Pro", "Múltiplos usuários", "Gerente de conta"],
+    features: ["5.000 créditos/mês", "Tudo do Creator", "Múltiplos usuários", "Gerente de conta"],
   },
 ];
 
@@ -85,24 +94,41 @@ export default function SettingsPage() {
   }, []);
 
   async function handleCheckout(planId: string) {
-    if (!userId || !userEmail) return;
     setLoading(planId);
     try {
-      const res = await fetch(`${API}/stripe/create-checkout`, {
+      let uid = userId;
+      let email = userEmail;
+
+      // Tenta pegar do Supabase se não tiver
+      if (!uid || !email) {
+        try {
+          const { getSupabase } = require("@/lib/supabase");
+          const sb = getSupabase();
+          const { data } = await sb.auth.getUser();
+          uid = data?.user?.id || "";
+          email = data?.user?.email || "";
+        } catch {}
+      }
+
+      // Checkout via Cakto — pagamentos no Brasil (PIX nativo, taxas
+      // menores). Stripe fica reservado pra quando expandir internacional.
+      const res = await fetch(`${API}/cakto/create-checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           plan: planId,
-          user_id: userId,
-          user_email: userEmail,
+          user_id: uid || "anonymous",
+          user_email: email || "user@clipforge.com",
         }),
       });
       const data = await res.json();
       if (data.checkout_url) {
         window.location.href = data.checkout_url;
+      } else {
+        alert("Erro ao criar checkout: " + (data.detail || "Tente novamente"));
       }
-    } catch {
-      alert("Erro ao criar checkout. Tente novamente.");
+    } catch (e) {
+      alert("Erro de conexão. Tente novamente.");
     } finally {
       setLoading(null);
     }
@@ -158,7 +184,7 @@ export default function SettingsPage() {
   }
 
   return (
-    <div style={{ padding: "24px 28px", maxWidth: "860px" }}>
+    <div style={{ padding: "24px 28px", maxWidth: "1080px" }}>
       <div className="mb-6">
         <h1 className="text-[20px] font-bold text-[#f0f0f5] mb-1" style={{ letterSpacing: "-0.02em" }}>
           Configurações
@@ -205,7 +231,7 @@ export default function SettingsPage() {
           </div>
 
           {/* Grid de planos */}
-          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+          <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
             {PLANS.map(plan => (
               <div key={plan.id} className="rounded-[14px] p-5 flex flex-col gap-4 relative"
                 style={{
@@ -225,7 +251,7 @@ export default function SettingsPage() {
                   <p className="text-[11px] font-semibold mb-2" style={{ color: plan.color, letterSpacing: "0.08em" }}>
                     {plan.name.toUpperCase()}
                   </p>
-                  <p className="text-[32px] font-bold text-[#f0f0f5] leading-none">
+                  <p className="text-[28px] font-bold text-[#f0f0f5] leading-none">
                     R${plan.price}
                     <span className="text-[13px] font-normal text-[#55556a]">/mês</span>
                   </p>
@@ -259,6 +285,10 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+          <p className="text-[11px] text-[#55556a] text-center">
+            Pagamento processado via Cakto — PIX, cartão ou boleto. Créditos são liberados automaticamente após a confirmação.
+          </p>
         </div>
       )}
 
