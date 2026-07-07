@@ -298,8 +298,66 @@ const nodeTypes = { midia: MidiaNode, gerador: GeradorNode, resultado: Resultado
 
 // ── Painel de configuração — Mídia ──────────────────────────────
 
+// ── Galeria de mídia já enviada (localStorage) ──────────────────
+// Guarda as últimas imagens enviadas pra reaproveitar sem precisar
+// subir do zero toda vez — igual ao comportamento visto no PipClip.
+interface GalleryItem { url: string; label: string; uploadedAt: number }
+const GALLERY_KEY = "clipforge_gallery";
+
+function getGallery(): GalleryItem[] {
+  try { return JSON.parse(localStorage.getItem(GALLERY_KEY) || "[]"); } catch { return []; }
+}
+function addToGallery(url: string, label: string) {
+  try {
+    const gallery = getGallery().filter(g => g.url !== url);
+    gallery.unshift({ url, label, uploadedAt: Date.now() });
+    localStorage.setItem(GALLERY_KEY, JSON.stringify(gallery.slice(0, 60)));
+  } catch {}
+}
+
+function GalleryPickerModal({ onSelect, onUploadNew, onClose }: {
+  onSelect: (url: string) => void;
+  onUploadNew: () => void;
+  onClose: () => void;
+}) {
+  const items = getGallery();
+  return (
+    <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-md mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div>
+            <p className="text-sm font-bold text-[#f0f0f5]">Escolher imagem</p>
+            <p className="text-[10px] text-[#55556a]">Já enviadas antes, ou envie uma nova</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+        </div>
+        <div className="p-4">
+          <button type="button" onClick={onUploadNew}
+            className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer border-none mb-3"
+            style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8", border: "0.5px dashed rgba(124,109,245,0.4)" }}>
+            📷 Enviar novo do computador
+          </button>
+          {items.length === 0 ? (
+            <p className="text-[11px] text-[#55556a] text-center py-6">Nenhuma imagem enviada ainda — envie a primeira acima.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 max-h-72 overflow-y-auto">
+              {items.map(item => (
+                <button key={item.url} type="button" onClick={() => onSelect(item.url)}
+                  className="rounded-lg overflow-hidden cursor-pointer border-none" style={{ height: "80px", background: "rgba(255,255,255,0.04)" }}>
+                  <img src={item.url} className="w-full h-full object-cover" alt={item.label} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update: (p: Partial<BlockData>) => void; onUpdate: (id: string, p: Partial<BlockData>) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [showGallery, setShowGallery] = useState(false);
   const role = node.data.role || "produto";
   const cfg = ROLE_CONFIG[role];
 
@@ -312,6 +370,7 @@ function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update:
       if (!res.ok) throw new Error();
       const data = await res.json();
       onUpdate(node.id, { imageUrl: data.url, uploading: false } as any);
+      addToGallery(data.url, cfg.label);
     } catch {
       const reader = new FileReader();
       reader.onload = ev => onUpdate(node.id, { imageUrl: ev.target?.result as string, uploading: false } as any);
@@ -336,7 +395,7 @@ function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update:
 
       <div>
         <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto {role === "persona" ? "(opcional)" : ""}</label>
-        <div onClick={() => fileRef.current?.click()}
+        <div onClick={() => setShowGallery(true)}
           onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) upload(f); }}
           onDragOver={e => e.preventDefault()}
           className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all"
@@ -351,11 +410,18 @@ function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update:
           ) : (
             <>
               <span className="text-2xl mb-1.5">{cfg.icon}</span>
-              <p className="text-xs text-[#9090a8]">Arraste ou clique para enviar</p>
+              <p className="text-xs text-[#9090a8]">Clique para escolher ou enviar</p>
             </>
           )}
         </div>
         <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+        {showGallery && (
+          <GalleryPickerModal
+            onSelect={url => { onUpdate(node.id, { imageUrl: url } as any); setShowGallery(false); }}
+            onUploadNew={() => { setShowGallery(false); fileRef.current?.click(); }}
+            onClose={() => setShowGallery(false)}
+          />
+        )}
         {node.data.imageUrl && (
           <button type="button" onClick={() => onUpdate(node.id, { imageUrl: "" } as any)}
             className="w-full mt-1.5 py-1.5 rounded-[6px] text-[10px] cursor-pointer border-none" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
