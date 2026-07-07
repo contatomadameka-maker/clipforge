@@ -1,0 +1,200 @@
+# ─────────────────────────────────────────────────────────────
+# backend/routers/seedance.py
+# Geração de vídeo final via Seedance 2.0 (ByteDance) — Replicate
+# ─────────────────────────────────────────────────────────────
+#
+# Por quê essa mudança de arquitetura?
+# Até aqui o pipeline era: Kling gera um vídeo de CENÁRIO (fundo) →
+# HeyGen anima um AVATAR falando por cima → resultado ficava com cara
+# de "cabeça falante colada em fundo verde", sem o produto na mão, sem
+# integração real entre avatar e cenário.
+#
+# O Seedance 2.0 é um modelo ÚNICO que recebe: uma foto (produto e/ou
+# persona) + um prompt descrevendo a cena E a fala (entre aspas) — e
+# devolve o vídeo inteiro já com câmera, cena, produto na mão e o
+# avatar falando com lip-sync, ÁUDIO NATIVO incluso. Uma chamada só,
+# no lugar de Kling (cenário) + HeyGen (avatar) + TTS separado.
+#
+# O contrato exposto pro resto do projeto continua o mesmo padrão
+# assíncrono já usado em cenario.py e heygen.py: POST /generate
+# retorna task_id na hora, GET /status/{task_id} faz o polling.
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+from config import get_settings
+import httpx
+
+router = APIRouter()
+settings = get_settings()
+
+REPLICATE_API_URL = "https://api.replicate.com/v1"
+
+# Modelo único — Replicate expõe prompt + imagens de referência +
+# duração + resolução + geração de áudio num só endpoint (diferente da
+# fal, que divide em text-to-video/image-to-video/reference-to-video).
+# Docs: https://replicate.com/bytedance/seedance-2.0
+REPLICATE_MODEL = "bytedance/seedance-2.0"
+
+
+def _replicate_headers() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.replicate_api_token}",
+        "Content-Type": "application/json",
+    }
+
+
+class GenerateSeedanceRequest(BaseModel):
+    # Foto do produto — obrigatória, é o que o avatar segura na cena
+    product_image_url: str
+    # Foto da persona/avatar (retrato) — opcional; se não vier, o
+    # modelo pode gerar uma pessoa genérica a partir só do prompt
+    persona_image_url: Optional[str] = None
+    # Descrição da cena em linguagem natural (ex: "dentro de uma
+    # academia lotada, câmera na altura do peito, iluminação quente")
+    scene_prompt: str
+    # O que o avatar deve falar — vai automaticamente entre aspas no
+    # prompt final, que é como o Seedance reconhece diálogo
+    dialogue: str
+    aspect_ratio: str = "9:16"
+    duration: str = "10"  # Seedance aceita 4–15s
+    resolution: str = "720p"
+
+
+class SeedanceResponse(BaseModel):
+    task_id: str
+    status: str
+
+
+class SeedanceStatusResponse(BaseModel):
+    task_id: str
+    status: str  # "processing" | "done" | "error"
+    video_url: str = ""
+    error: str = ""
+
+
+def _build_prompt(req: GenerateSeedanceRequest) -> str:
+    """Monta o prompt final combinando cena + diálogo, seguindo a
+    convenção do Seedance: fala entre aspas, imagens referenciadas
+    como [Image1], [Image2]."""
+
+    image_refs = []
+    if req.persona_image_url:
+        image_refs.append(
+            "A pessoa em [Image1] segura o produto de [Image2] e fala diretamente para a câmera"
+        )
+    else:
+        image_refs.append(
+            "Uma pessoa segura o produto de [Image1] e fala diretamente para a câmera"
+        )
+
+    scene = f"{image_refs[0]}, {req.scene_prompt}."
+    speech = f' A pessoa diz: "{req.dialogue}"'
+    return scene + speech
+
+
+@router.post("/generate", response_model=SeedanceResponse)
+async def generate_seedance(req: GenerateSeedanceRequest):
+    """Cria a prediction no Replicate e retorna IMEDIATAMENTE com o id
+    (status='processing'). O frontend consulta /seedance/status/{task_id}
+    em polling — mesmo padrão já usado em cenario.py e heygen.py."""
+
+    prompt = _build_prompt(req)
+
+    # Ordem das imagens de referência importa — precisa bater com a
+    # ordem citada no prompt ([Image1], [Image2], ...)
+    reference_images: List[str] = []
+    if req.persona_image_url:
+        reference_images = [req.persona_image_url, req.product_image_url]
+    else:
+        reference_images = [req.product_image_url]
+
+    payload = {
+        "input": {
+            "prompt": prompt,
+            "reference_images": reference_images,
+            "duration": req.duration,
+            "resolution": req.resolution,
+            "aspect_ratio": req.aspect_ratio,
+            "generate_audio": True,
+        }
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.post(
+            f"{REPLICATE_API_URL}/models/{REPLICATE_MODEL}/predictions",
+            headers=_replicate_headers(),
+            json=payload,
+        )
+
+        if res.status_code not in (200, 201):
+            raise HTTPException(
+                status_code=res.status_code,
+                detail=f"Erro Replicate (Seedance): {res.text}"
+            )
+
+        data = res.json()
+        prediction_id = data.get("id", "")
+
+        if not prediction_id:
+            raise HTTPException(status_code=500, detail="Replicate não retornou id da prediction")
+
+        return SeedanceResponse(task_id=prediction_id, status="processing")
+
+
+@router.get("/status/{task_id}", response_model=SeedanceStatusResponse)
+async def get_seedance_status(task_id: str):
+    """Consulta o status da prediction. O frontend chama esse endpoint
+    em polling (a cada ~5s) até status == 'done' ou 'error'."""
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            f"{REPLICATE_API_URL}/predictions/{task_id}",
+            headers=_replicate_headers(),
+        )
+
+        if res.status_code != 200:
+            raise HTTPException(
+                status_code=res.status_code,
+                detail=f"Erro ao verificar status na Replicate: {res.text}"
+            )
+
+        data = res.json()
+        replicate_status = data.get("status", "")
+
+        if replicate_status == "succeeded":
+            output = data.get("output", "")
+            # Alguns modelos de vídeo na Replicate devolvem string direto,
+            # outros uma lista, outros um dict com "video"."url" — trata
+            # os três formatos possíveis.
+            video_url = ""
+            if isinstance(output, str):
+                video_url = output
+            elif isinstance(output, list) and output:
+                video_url = output[0]
+            elif isinstance(output, dict):
+                video_url = output.get("video", {}).get("url", "") if isinstance(output.get("video"), dict) else output.get("url", "")
+
+            if not video_url:
+                return SeedanceStatusResponse(
+                    task_id=task_id,
+                    status="error",
+                    error=f"Replicate retornou succeeded mas sem output reconhecível: {output}",
+                )
+
+            return SeedanceStatusResponse(
+                task_id=task_id,
+                status="done",
+                video_url=video_url,
+            )
+
+        if replicate_status in ("starting", "processing"):
+            return SeedanceStatusResponse(task_id=task_id, status="processing")
+
+        # "failed" ou "canceled"
+        error_msg = data.get("error") or f"Replicate retornou status: {replicate_status}"
+        return SeedanceStatusResponse(
+            task_id=task_id,
+            status="error",
+            error=str(error_msg),
+        )
