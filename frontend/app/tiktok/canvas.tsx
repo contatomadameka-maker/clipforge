@@ -888,13 +888,18 @@ export default function TikTokCanvasInner() {
 
     const connectedEdges = edges.filter(e => e.target === geradorId);
     let productImageUrl = "";
+    let productName = "";
     let personaImageUrl = "";
     for (const edge of connectedEdges) {
       const source = nodes.find(n => n.id === edge.source);
       if (!source || source.data.type !== "midia") continue;
-      if (source.data.role === "produto") productImageUrl = (source.data.imageUrl as string) || "";
+      if (source.data.role === "produto") {
+        productImageUrl = (source.data.imageUrl as string) || "";
+        productName = (source.data.productName as string) || "";
+      }
       if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
     }
+
 
     const personaDescription = (geradorNode.data.personaDescription as string) || "";
     const scenePrompt = (geradorNode.data.scenePrompt as string) || "";
@@ -984,6 +989,22 @@ export default function TikTokCanvasInner() {
           if (statusData.status === "done") {
             clearInterval(poll);
             updateNodeData(resultId, { status: "done", progress: 100, videoUrl: statusData.video_url });
+            // Grava no histórico real (Meus vídeos) — silencioso, não
+            // bloqueia a UI se falhar, o vídeo já está pronto de qualquer forma
+            fetch(`${API}/videos/save`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: userId,
+                title: productName || "Vídeo de Produto",
+                type: "tiktok",
+                video_url: statusData.video_url,
+                duration_seconds: parseInt(duration),
+                format: (geradorNode.data.aspectRatio as string) || "9:16",
+                credits_used: cost,
+                status: "done",
+              }),
+            }).catch(() => {});
           } else if (statusData.status === "error" || attempts > maxAttempts) {
             clearInterval(poll);
             updateNodeData(resultId, { status: "error", errorMsg: statusData.error || "Timeout aguardando geração" });
