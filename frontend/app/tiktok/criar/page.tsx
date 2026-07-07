@@ -62,10 +62,10 @@ function GalleryPickerModal({ onSelect, onUploadNew, onClose }: { onSelect: (url
 
 const API = "https://clipforge-6yzz.onrender.com";
 
-const CREDIT_COST: Record<string, number> = { "5": 45, "10": 90, "15": 135 };
-const RESOLUTION_SURCHARGE: Record<string, number> = { "480p": 0, "720p": 20, "1080p": 35 };
+const RESOLUTION_RATE: Record<string, number> = { "480p": 12, "720p": 27 };
 function computeCost(duration: string, resolution: string): number {
-  return (CREDIT_COST[duration] || 60) + (RESOLUTION_SURCHARGE[resolution] ?? 0);
+  const rate = RESOLUTION_RATE[resolution] ?? RESOLUTION_RATE["480p"];
+  return parseInt(duration || "10") * rate;
 }
 
 // Ritmo médio de fala em PT-BR (~2,5 palavras/segundo) — usado pra
@@ -505,15 +505,15 @@ export default function CriarGuiadoPage() {
             <div>
               <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Resolução</label>
               <div className="flex gap-2">
-                {["480p", "720p", "1080p"].map(q => {
-                  const surcharge = RESOLUTION_SURCHARGE[q] ?? 0;
+                {["480p", "720p"].map(q => {
+                  const rate = RESOLUTION_RATE[q];
                   const selected = resolution === q;
                   return (
                     <button key={q} type="button" onClick={() => setResolution(q)}
                       className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none flex flex-col items-center gap-0.5"
                       style={selected ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
                       <span>{q}</span>
-                      <span className="text-[9px] opacity-70">{surcharge > 0 ? `+${surcharge} cr` : "incluso"}</span>
+                      <span className="text-[9px] opacity-70">{rate} cr/s</span>
                     </button>
                   );
                 })}
