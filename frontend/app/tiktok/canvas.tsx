@@ -43,8 +43,11 @@ interface BlockData extends Record<string, unknown> {
   category?: string;
   // cenario — agora é só descrição de texto da cena (Seedance gera tudo)
   scenePrompt?: string;
-  // avatar — agora é foto de persona (upload), não mais HeyGen avatar_id
+  // avatar — foto de persona é OPCIONAL (Seedance gera a pessoa
+  // inteira a partir da descrição em texto, testado e confirmado
+  // funcionando sem nenhuma imagem de rosto)
   personaImageUrl?: string;
+  personaDescription?: string;
   personaName?: string;
   avatarStyle?: string;
   language?: string;
@@ -209,10 +212,14 @@ function AvatarNode({ data, selected }: NodeProps) {
               <p className="text-[10px] text-[#55556a]">{d.avatarStyle || "Estilo não definido"}</p>
             </div>
           </div>
+        ) : d.personaDescription ? (
+          <div>
+            <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-3">{d.personaDescription}</p>
+          </div>
         ) : (
           <div className="flex flex-col items-center py-3 gap-1.5">
             <div className="text-2xl">🧑‍🎤</div>
-            <p className="text-xs text-[#55556a]">Duplo clique para enviar foto</p>
+            <p className="text-xs text-[#55556a]">Duplo clique para descrever a persona</p>
           </div>
         )}
       </BaseBlock>
@@ -387,17 +394,60 @@ function AvatarPicker({ node, update, onUpdate }: {
     }
   }
 
+  const PERSONA_TEMPLATES = [
+    { label: "👩 Mulher, 30-40, fitness", text: "mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia" },
+    { label: "👨 Homem, 25-35, casual", text: "homem com seus 28 anos, barba curta, estilo casual, camiseta e jeans" },
+    { label: "👩 Mulher, 20-30, aesthetic", text: "mulher com seus 24 anos, cabelo solto, estilo aesthetic, roupa casual elegante" },
+    { label: "👨 Homem, 35-45, profissional", text: "homem com seus 40 anos, aparência profissional, camisa social" },
+  ];
+
   return (
     <div className="flex flex-col gap-4">
+      <div className="rounded-[10px] px-3 py-2.5" style={{ background: "rgba(62,207,142,0.08)", border: "0.5px solid rgba(62,207,142,0.2)" }}>
+        <p className="text-[11px] text-[#3ecf8e] leading-relaxed">
+          ✨ Não precisa de foto — descreva a persona em texto (idade, cabelo, corpo, roupa) e o Seedance gera a pessoa inteira. Testado e funcionando sem imagem de rosto.
+        </p>
+      </div>
+
       <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto da persona (retrato)</label>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Modelos rápidos</label>
+        <div className="grid grid-cols-1 gap-1.5">
+          {PERSONA_TEMPLATES.map(t => (
+            <button key={t.label} type="button"
+              onClick={() => update({ personaDescription: t.text })}
+              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none transition-all"
+              style={node.data.personaDescription === t.text
+                ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.4)" }
+                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Descrição da persona</label>
+        <textarea
+          value={node.data.personaDescription || ""}
+          onChange={e => update({ personaDescription: e.target.value })}
+          placeholder="Ex: mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia"
+          rows={4}
+          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }}
+        />
+      </div>
+
+      <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto de referência (opcional)</label>
         <div
           onClick={() => fileRef.current?.click()}
           onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadPersona(file); }}
           onDragOver={e => e.preventDefault()}
           className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all hover:border-[#3ecf8e]"
           style={{
-            height: node.data.personaImageUrl ? "180px" : "120px",
+            height: node.data.personaImageUrl ? "160px" : "90px",
             border: "1.5px dashed rgba(62,207,142,0.3)",
             background: "rgba(62,207,142,0.04)",
           }}>
@@ -405,28 +455,25 @@ function AvatarPicker({ node, update, onUpdate }: {
             <img src={node.data.personaImageUrl} className="w-full h-full object-contain rounded-xl" alt="" />
           ) : uploading ? (
             <>
-              <div className="w-6 h-6 border-2 border-[#3ecf8e]/30 border-t-[#3ecf8e] rounded-full animate-spin mb-2" />
+              <div className="w-5 h-5 border-2 border-[#3ecf8e]/30 border-t-[#3ecf8e] rounded-full animate-spin mb-1.5" />
               <p className="text-xs text-[#9090a8]">Enviando...</p>
             </>
           ) : (
             <>
-              <span className="text-2xl mb-1.5">🧑‍🎤</span>
-              <p className="text-xs text-[#9090a8]">Arraste ou clique para enviar</p>
-              <p className="text-[10px] text-[#55556a]">Retrato de rosto/corpo, JPG/PNG</p>
+              <span className="text-xl mb-1">📷</span>
+              <p className="text-[11px] text-[#9090a8]">Só se quiser preservar um rosto específico</p>
             </>
           )}
         </div>
         <input ref={fileRef} type="file" accept="image/*" className="hidden"
           onChange={e => { const file = e.target.files?.[0]; if (file) uploadPersona(file); }} />
-        <p className="text-[10px] text-[#55556a] mt-1.5">Dica: fotos com boa iluminação e rosto visível geram resultados mais consistentes.</p>
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Nome da persona</label>
-        <input type="text" value={node.data.personaName || ""} onChange={e => update({ personaName: e.target.value })}
-          placeholder="Ex: Ana"
-          className="w-full h-10 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+        {node.data.personaImageUrl && (
+          <button type="button" onClick={() => onUpdate(node.id, { personaImageUrl: "" } as any)}
+            className="w-full mt-1.5 py-1.5 rounded-[6px] text-[10px] cursor-pointer border-none"
+            style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+            Remover foto (usar só descrição)
+          </button>
+        )}
       </div>
 
       <div>
@@ -441,21 +488,6 @@ function AvatarPicker({ node, update, onUpdate }: {
               <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
                 style={{ background: node.data.avatarStyle === s ? "#3ecf8e" : "#55556a" }} />
               {s}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Idioma</label>
-        <div className="flex gap-2">
-          {[{ id: "pt-br", label: "🇧🇷 PT-BR" }, { id: "en", label: "🇺🇸 EN" }, { id: "es", label: "🇪🇸 ES" }].map(l => (
-            <button key={l.id} type="button" onClick={() => update({ language: l.id })}
-              className="flex-1 py-2 rounded-[8px] text-xs font-medium cursor-pointer border-none"
-              style={node.data.language === l.id
-                ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
-                : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-              {l.label}
             </button>
           ))}
         </div>
@@ -849,6 +881,7 @@ export default function TikTokCanvasInner() {
       const connectedEdges = edges.filter(e => e.target === gerarNode.id);
       let productImageUrl = "";
       let personaImageUrl = "";
+      let personaDescription = "";
       let scenePrompt = "";
       let dialogue = "";
       let duration = "10";
@@ -862,6 +895,7 @@ export default function TikTokCanvasInner() {
         }
         if (sourceNode.data.type === "avatar") {
           personaImageUrl = (sourceNode.data as any).personaImageUrl || "";
+          personaDescription = (sourceNode.data as any).personaDescription || "";
         }
         if (sourceNode.data.type === "cenario") {
           scenePrompt = (sourceNode.data as any).scenePrompt || "";
@@ -872,7 +906,10 @@ export default function TikTokCanvasInner() {
           const upstreamNode = nodes.find(n => n.id === ie.source);
           if (!upstreamNode) continue;
           if (upstreamNode.data.type === "produto") productImageUrl = (upstreamNode.data.image as string) || "";
-          if (upstreamNode.data.type === "avatar") personaImageUrl = (upstreamNode.data as any).personaImageUrl || "";
+          if (upstreamNode.data.type === "avatar") {
+            personaImageUrl = (upstreamNode.data as any).personaImageUrl || "";
+            personaDescription = (upstreamNode.data as any).personaDescription || "";
+          }
           if (upstreamNode.data.type === "cenario") scenePrompt = (upstreamNode.data as any).scenePrompt || "";
           if (upstreamNode.data.type === "copy") dialogue = (upstreamNode.data.script as string) || "";
 
@@ -890,6 +927,10 @@ export default function TikTokCanvasInner() {
         alert("Bloco Gerar precisa estar conectado (direta ou indiretamente) a um Produto com foto e uma Copy com script!");
         continue;
       }
+      if (!personaImageUrl && !personaDescription) {
+        alert("Bloco Avatar precisa ter uma foto OU uma descrição da persona preenchida!");
+        continue;
+      }
 
       setNodes(nds => nds.map(n => n.id === gerarNode.id
         ? { ...n, data: { ...n.data, status: "generating", progress: 10 } }
@@ -903,6 +944,7 @@ export default function TikTokCanvasInner() {
           body: JSON.stringify({
             product_image_url: productImageUrl,
             persona_image_url: personaImageUrl || null,
+            persona_description: personaDescription || null,
             scene_prompt: scenePrompt || "fundo neutro, iluminação profissional",
             dialogue,
             aspect_ratio: (gerarNode.data.format as string) || "9:16",
