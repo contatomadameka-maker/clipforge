@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     r2_public_url: str = ""
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    cakto_webhook_secret: str = ""
     class Config:
         env_file = ".env"
         extra = "allow"
