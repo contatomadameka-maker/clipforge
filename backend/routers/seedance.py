@@ -47,9 +47,15 @@ def _replicate_headers() -> dict:
 class GenerateSeedanceRequest(BaseModel):
     # Foto do produto — obrigatória, é o que o avatar segura na cena
     product_image_url: str
-    # Foto da persona/avatar (retrato) — opcional; se não vier, o
-    # modelo pode gerar uma pessoa genérica a partir só do prompt
+    # Foto da persona/avatar (retrato) — OPCIONAL. Se não vier, o
+    # Seedance gera a pessoa inteira a partir da descrição em texto
+    # abaixo (idade, cabelo, corpo, roupa) — testado e confirmado
+    # funcionando sem nenhuma imagem de rosto.
     persona_image_url: Optional[str] = None
+    # Descrição física da persona em texto — usada sempre que não há
+    # foto (ex: "mulher de 38 anos, cabelo amarrado, corpo acadêmico,
+    # roupa de academia")
+    persona_description: Optional[str] = None
     # Descrição da cena em linguagem natural (ex: "dentro de uma
     # academia lotada, câmera na altura do peito, iluminação quente")
     scene_prompt: str
@@ -74,21 +80,28 @@ class SeedanceStatusResponse(BaseModel):
 
 
 def _build_prompt(req: GenerateSeedanceRequest) -> str:
-    """Monta o prompt final combinando cena + diálogo, seguindo a
-    convenção do Seedance: fala entre aspas, imagens referenciadas
-    como [Image1], [Image2]."""
+    """Monta o prompt final combinando persona + cena + diálogo,
+    seguindo a convenção do Seedance: fala entre aspas, imagens
+    referenciadas como [Image1], [Image2].
 
-    image_refs = []
+    Funciona em dois modos:
+    - COM foto de persona: referencia [Image1] (persona) e [Image2]
+      (produto), preservando o rosto da foto.
+    - SEM foto (modo confirmado funcionando pelo usuário): descreve a
+      pessoa inteiramente em texto (idade, cabelo, corpo, roupa) e o
+      Seedance gera a persona do zero — não precisa de nenhuma imagem
+      de rosto.
+    """
+
     if req.persona_image_url:
-        image_refs.append(
-            "A pessoa em [Image1] segura o produto de [Image2] e fala diretamente para a câmera"
-        )
+        subject = "A pessoa em [Image1] segura o produto de [Image2]"
     else:
-        image_refs.append(
-            "Uma pessoa segura o produto de [Image1] e fala diretamente para a câmera"
-        )
+        # Sem foto — descreve a pessoa em texto. Se o usuário não
+        # preencheu persona_description, cai num fallback genérico.
+        desc = req.persona_description or "uma pessoa"
+        subject = f"Uma {desc} segura o produto de [Image1]"
 
-    scene = f"{image_refs[0]}, {req.scene_prompt}."
+    scene = f"{subject}, {req.scene_prompt}, e fala diretamente para a câmera."
     speech = f' A pessoa diz: "{req.dialogue}"'
     return scene + speech
 
@@ -107,6 +120,8 @@ async def generate_seedance(req: GenerateSeedanceRequest):
     if req.persona_image_url:
         reference_images = [req.persona_image_url, req.product_image_url]
     else:
+        # Sem foto de persona — só o produto entra como referência de
+        # imagem; a pessoa é descrita inteiramente em texto no prompt
         reference_images = [req.product_image_url]
 
     payload = {
