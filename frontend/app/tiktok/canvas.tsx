@@ -13,6 +13,7 @@
 //                 "Gerar", mostra progresso e o vídeo final
 
 import { useState, useCallback, useRef, useEffect } from "react";
+import { getSupabase } from "@/lib/supabase";
 import { ReactFlow,
   Background,
   Controls,
@@ -87,6 +88,7 @@ function MidiaNode({ data, selected }: NodeProps) {
   const cfg = ROLE_CONFIG[role];
   return (
     <>
+      <Handle type="target" position={Position.Left} style={handleStyle} />
       <Handle type="source" position={Position.Right} style={handleStyle} />
       <div
         className="relative rounded-2xl cursor-pointer transition-all duration-150"
@@ -629,14 +631,12 @@ export default function TikTokCanvasInner() {
 
   useEffect(() => {
     try {
-      const sb = (window as any).__supabase;
-      if (sb) {
-        sb.auth.getUser().then(({ data }: any) => {
-          if (data?.user) {
-            fetch(`${API}/credits/${data.user.id}`).then(r => r.json()).then(d => { if (d.balance !== undefined) setUserCredits(d.balance); }).catch(() => {});
-          }
-        });
-      }
+      const sb = getSupabase();
+      sb.auth.getUser().then(({ data }: any) => {
+        if (data?.user) {
+          fetch(`${API}/credits/${data.user.id}`).then(r => r.json()).then(d => { if (d.balance !== undefined) setUserCredits(d.balance); }).catch(() => {});
+        }
+      });
     } catch {}
   }, []);
 
