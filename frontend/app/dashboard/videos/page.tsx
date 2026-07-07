@@ -1,9 +1,12 @@
 "use client";
 
-// frontend/app/videos/page.tsx
-// Página de vídeos gerados
+// frontend/app/dashboard/videos/page.tsx
+// Página de vídeos gerados — agora com dados reais do backend
 
 import { useState, useEffect } from "react";
+import { getSupabase } from "@/lib/supabase";
+
+const API = "https://clipforge-6yzz.onrender.com";
 
 interface Video {
   id: string;
@@ -12,56 +15,11 @@ interface Video {
   status: "done" | "generating" | "failed";
   video_url?: string;
   thumbnail_url?: string;
-  duration?: string;
+  duration_seconds?: number;
   credits_used?: number;
   created_at: string;
   progress?: number;
 }
-
-// Mock de vídeos para visualização (substituir por dados reais do Supabase)
-const MOCK_VIDEOS: Video[] = [
-  {
-    id: "1",
-    title: "Vestido Azul Moda Verão",
-    type: "tiktok",
-    status: "done",
-    duration: "30s",
-    credits_used: 15,
-    created_at: new Date(Date.now() - 3600000).toISOString(),
-    thumbnail_url: "",
-    video_url: "#",
-  },
-  {
-    id: "2",
-    title: "Tênis Nike Air Max Review",
-    type: "tiktok",
-    status: "generating",
-    duration: "45s",
-    credits_used: 20,
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-    progress: 65,
-  },
-  {
-    id: "3",
-    title: "Kit Maquiagem Oferta",
-    type: "tiktok",
-    status: "done",
-    duration: "15s",
-    credits_used: 8,
-    created_at: new Date(Date.now() - 86400000).toISOString(),
-    video_url: "#",
-  },
-  {
-    id: "4",
-    title: "Davi e Golias — Documentário",
-    type: "studio",
-    status: "done",
-    duration: "8 min",
-    credits_used: 60,
-    created_at: new Date(Date.now() - 172800000).toISOString(),
-    video_url: "#",
-  },
-];
 
 function timeAgo(date: string) {
   const diff = Date.now() - new Date(date).getTime();
@@ -73,9 +31,29 @@ function timeAgo(date: string) {
 }
 
 export default function VideosPage() {
-  const [videos, setVideos] = useState<Video[]>(MOCK_VIDEOS);
+  const [videos, setVideos] = useState<Video[]>([]);
+  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "tiktok" | "studio" | "generating">("all");
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    try {
+      const sb = getSupabase();
+      sb.auth.getUser().then(({ data }: any) => {
+        if (data?.user) {
+          fetch(`${API}/videos/${data.user.id}`)
+            .then(r => r.json())
+            .then(d => setVideos(d.videos || []))
+            .catch(() => {})
+            .finally(() => setLoading(false));
+        } else {
+          setLoading(false);
+        }
+      });
+    } catch {
+      setLoading(false);
+    }
+  }, []);
 
   const filtered = videos.filter(v => {
     if (filter === "tiktok" && v.type !== "tiktok") return false;
@@ -145,7 +123,12 @@ export default function VideosPage() {
       </div>
 
       {/* Grid de vídeos */}
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3">
+          <div className="w-6 h-6 border-2 border-[#7c6df5]/30 border-t-[#7c6df5] rounded-full animate-spin" />
+          <p className="text-[#55556a] text-sm">Carregando seus vídeos...</p>
+        </div>
+      ) : filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3">
           <div className="text-4xl">🎬</div>
           <p className="text-[#55556a] text-sm">Nenhum vídeo encontrado</p>
@@ -157,9 +140,11 @@ export default function VideosPage() {
             <div key={video.id} className="rounded-2xl overflow-hidden group"
               style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
 
-              {/* Thumbnail */}
+              {/* Thumbnail / preview */}
               <div className="relative" style={{ aspectRatio: video.type === "tiktok" ? "9/16" : "16/9", maxHeight: "200px", background: "#0c0c14" }}>
-                {video.thumbnail_url ? (
+                {video.status === "done" && video.video_url ? (
+                  <video src={video.video_url} className="w-full h-full object-cover" muted />
+                ) : video.thumbnail_url ? (
                   <img src={video.thumbnail_url} className="w-full h-full object-cover" alt={video.title} />
                 ) : (
                   <div className="w-full h-full flex flex-col items-center justify-center gap-2">
@@ -173,10 +158,7 @@ export default function VideosPage() {
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2"
                     style={{ background: "rgba(0,0,0,0.7)" }}>
                     <div className="w-6 h-6 border-2 border-[#7c6df5]/30 border-t-[#7c6df5] rounded-full animate-spin" />
-                    <span className="text-xs text-[#9090a8]">Gerando... {video.progress}%</span>
-                    <div className="w-24 h-1 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.1)" }}>
-                      <div className="h-full rounded-full" style={{ width: `${video.progress}%`, background: "#7c6df5" }} />
-                    </div>
+                    <span className="text-xs text-[#9090a8]">Gerando... {video.progress || 0}%</span>
                   </div>
                 )}
 
@@ -212,24 +194,20 @@ export default function VideosPage() {
               {/* Info */}
               <div className="p-4">
                 <p className="text-sm font-medium text-[#f0f0f5] mb-1 truncate">{video.title}</p>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-[11px] text-[#55556a]">
-                    {video.duration && <span>⏱ {video.duration}</span>}
-                    {video.credits_used && <span>· {video.credits_used} créditos</span>}
-                    <span>· {timeAgo(video.created_at)}</span>
-                  </div>
+                <div className="flex items-center gap-2 text-[11px] text-[#55556a]">
+                  {video.duration_seconds && <span>⏱ {video.duration_seconds}s</span>}
+                  {video.credits_used !== undefined && <span>· {video.credits_used} créditos</span>}
+                  <span>· {timeAgo(video.created_at)}</span>
                 </div>
 
                 {/* Ações */}
-                {video.status === "done" && (
+                {video.status === "done" && video.video_url && (
                   <div className="flex gap-2 mt-3">
-                    {video.video_url && video.video_url !== "#" && (
-                      <a href={video.video_url} download
-                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-xs font-medium no-underline"
-                        style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8", border: "0.5px solid rgba(124,109,245,0.25)" }}>
-                        ⬇️ Baixar
-                      </a>
-                    )}
+                    <a href={video.video_url} download
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[8px] text-xs font-medium no-underline"
+                      style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8", border: "0.5px solid rgba(124,109,245,0.25)" }}>
+                      ⬇️ Baixar
+                    </a>
                     <button type="button"
                       className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-[8px] text-xs font-medium cursor-pointer border-none"
                       style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
