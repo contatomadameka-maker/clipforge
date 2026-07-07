@@ -319,6 +319,20 @@ export default function CriarGuiadoPage() {
           if (statusData.status === "done") {
             clearInterval(poll);
             setResult({ status: "done", progress: 100, videoUrl: statusData.video_url });
+            fetch(`${API}/videos/save`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                user_id: userId,
+                title: productName || "Vídeo de Produto",
+                type: "tiktok",
+                video_url: statusData.video_url,
+                duration_seconds: parseInt(duration),
+                format: aspectRatio,
+                credits_used: cost,
+                status: "done",
+              }),
+            }).catch(() => {});
           } else if (statusData.status === "error" || attempts > maxAttempts) {
             clearInterval(poll);
             setResult({ status: "error", progress: 0, error: statusData.error || "Timeout aguardando geração" });
