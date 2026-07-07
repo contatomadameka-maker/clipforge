@@ -13,6 +13,53 @@
 import { useState, useRef, useEffect, useMemo } from "react";
 import { getSupabase } from "@/lib/supabase";
 
+// ── Galeria de mídia já enviada (localStorage, compartilhada com o canvas) ──
+interface GalleryItem { url: string; label: string; uploadedAt: number }
+const GALLERY_KEY = "clipforge_gallery";
+function getGallery(): GalleryItem[] {
+  try { return JSON.parse(localStorage.getItem(GALLERY_KEY) || "[]"); } catch { return []; }
+}
+function addToGallery(url: string, label: string) {
+  try {
+    const gallery = getGallery().filter(g => g.url !== url);
+    gallery.unshift({ url, label, uploadedAt: Date.now() });
+    localStorage.setItem(GALLERY_KEY, JSON.stringify(gallery.slice(0, 60)));
+  } catch {}
+}
+
+function GalleryPickerModal({ onSelect, onUploadNew, onClose }: { onSelect: (url: string) => void; onUploadNew: () => void; onClose: () => void }) {
+  const items = getGallery();
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-md mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div><p className="text-sm font-bold text-[#f0f0f5]">Escolher imagem</p><p className="text-[10px] text-[#55556a]">Já enviadas antes, ou envie uma nova</p></div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+        </div>
+        <div className="p-4">
+          <button type="button" onClick={onUploadNew}
+            className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer border-none mb-3"
+            style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8", border: "0.5px dashed rgba(124,109,245,0.4)" }}>
+            📷 Enviar novo do computador
+          </button>
+          {items.length === 0 ? (
+            <p className="text-[11px] text-[#55556a] text-center py-6">Nenhuma imagem enviada ainda — envie a primeira acima.</p>
+          ) : (
+            <div className="grid grid-cols-3 gap-2 max-h-72 overflow-y-auto">
+              {items.map(item => (
+                <button key={item.url} type="button" onClick={() => onSelect(item.url)}
+                  className="rounded-lg overflow-hidden cursor-pointer border-none" style={{ height: "80px", background: "rgba(255,255,255,0.04)" }}>
+                  <img src={item.url} className="w-full h-full object-cover" alt={item.label} />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const API = "https://clipforge-6yzz.onrender.com";
 
 const CREDIT_COST: Record<string, number> = { "5": 30, "10": 60, "15": 90 };
@@ -127,6 +174,8 @@ export default function CriarGuiadoPage() {
 
   const productFileRef = useRef<HTMLInputElement>(null);
   const personaFileRef = useRef<HTMLInputElement>(null);
+  const [showProductGallery, setShowProductGallery] = useState(false);
+  const [showPersonaGallery, setShowPersonaGallery] = useState(false);
 
   // Sugestão automática de duração — só atualiza se o usuário ainda
   // não mexeu manualmente no slider (pra não sobrescrever escolha dele)
@@ -149,7 +198,7 @@ export default function CriarGuiadoPage() {
   const cost = computeCost(duration, resolution);
   const videosRestantesNoPlano = useMemo(() => Math.floor(userCredits / cost), [userCredits, cost]);
 
-  async function uploadFile(file: File, onDone: (url: string) => void, onUploading: (v: boolean) => void) {
+  async function uploadFile(file: File, onDone: (url: string) => void, onUploading: (v: boolean) => void, label: string) {
     onUploading(true);
     try {
       const fd = new FormData();
@@ -157,6 +206,7 @@ export default function CriarGuiadoPage() {
       const res = await fetch(`${API}/storage/upload/product-image`, { method: "POST", body: fd });
       const data = await res.json();
       onDone(data.url);
+      addToGallery(data.url, label);
     } catch {
       const reader = new FileReader();
       reader.onload = ev => onDone(ev.target?.result as string);
@@ -322,8 +372,8 @@ export default function CriarGuiadoPage() {
           {/* Produto */}
           <div className="rounded-2xl p-4" style={{ background: "rgba(14,14,20,0.98)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
             <p className="text-xs font-semibold text-[#a99cf8] mb-3">🛍️ Produto</p>
-            <div onClick={() => productFileRef.current?.click()}
-              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) uploadFile(f, setProductImageUrl, setProductUploading); }}
+            <div onClick={() => setShowProductGallery(true)}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) uploadFile(f, setProductImageUrl, setProductUploading, "Produto"); }}
               onDragOver={e => e.preventDefault()}
               className="flex flex-col items-center justify-center rounded-xl cursor-pointer"
               style={{ height: productImageUrl ? "140px" : "100px", border: "1.5px dashed rgba(124,109,245,0.3)", background: "rgba(124,109,245,0.04)" }}>
@@ -334,11 +384,18 @@ export default function CriarGuiadoPage() {
               ) : (
                 <>
                   <span className="text-xl mb-1">📷</span>
-                  <p className="text-xs text-[#9090a8]">Arraste ou clique pra enviar</p>
+                  <p className="text-xs text-[#9090a8]">Clique pra escolher ou enviar</p>
                 </>
               )}
             </div>
-            <input ref={productFileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setProductImageUrl, setProductUploading); }} />
+            <input ref={productFileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setProductImageUrl, setProductUploading, "Produto"); }} />
+            {showProductGallery && (
+              <GalleryPickerModal
+                onSelect={url => { setProductImageUrl(url); setShowProductGallery(false); }}
+                onUploadNew={() => { setShowProductGallery(false); productFileRef.current?.click(); }}
+                onClose={() => setShowProductGallery(false)}
+              />
+            )}
             <input type="text" value={productName} onChange={e => setProductName(e.target.value)} placeholder="Nome do produto (ex: Fit Green)"
               className="w-full h-9 px-3 mt-2.5 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
@@ -362,13 +419,20 @@ export default function CriarGuiadoPage() {
               className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
             <p className="text-[10px] text-[#55556a] mt-1.5">Ou envie uma foto de referência (opcional):</p>
-            <div onClick={() => personaFileRef.current?.click()}
+            <div onClick={() => setShowPersonaGallery(true)}
               className="flex items-center gap-2 mt-1.5 px-3 py-2 rounded-[8px] cursor-pointer"
               style={{ background: "rgba(62,207,142,0.05)", border: "0.5px dashed rgba(62,207,142,0.3)" }}>
               {personaImageUrl ? <img src={personaImageUrl} className="w-8 h-8 rounded-lg object-cover" alt="" /> : <span className="text-sm">📷</span>}
-              <span className="text-[11px] text-[#9090a8]">{personaImageUrl ? "Foto enviada — clique pra trocar" : "Enviar foto de referência"}</span>
+              <span className="text-[11px] text-[#9090a8]">{personaImageUrl ? "Foto enviada — clique pra trocar" : "Escolher foto de referência"}</span>
             </div>
-            <input ref={personaFileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setPersonaImageUrl, () => {}); }} />
+            <input ref={personaFileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setPersonaImageUrl, () => {}, "Persona"); }} />
+            {showPersonaGallery && (
+              <GalleryPickerModal
+                onSelect={url => { setPersonaImageUrl(url); setShowPersonaGallery(false); }}
+                onUploadNew={() => { setShowPersonaGallery(false); personaFileRef.current?.click(); }}
+                onClose={() => setShowPersonaGallery(false)}
+              />
+            )}
           </div>
 
           {/* Cena */}
