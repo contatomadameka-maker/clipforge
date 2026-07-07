@@ -49,8 +49,8 @@ const COMPARE_ROWS = [
 const TOOLS = [
   {
     icon: "🛍️",
-    title: "Vídeo de Produto — TikTok Shop",
-    desc: "Envie a foto do produto, descreva a persona (com ou sem foto de referência) e a cena. Em minutos, receba um vídeo com avatar realista falando, segurando o produto, com áudio nativo — pronto pra postar.",
+    title: "Vídeo de Produto — TikTok, Kwai, Reels e TikTok Shop",
+    desc: "Envie a foto do produto, descreva a persona (com ou sem foto de referência) e a cena. Em minutos, receba um vídeo com avatar realista falando, segurando o produto, com áudio nativo — pronto pra postar no TikTok, Kwai, Reels ou direto no TikTok Shop.",
     status: "live",
     statusLabel: "Disponível agora",
     color: PURPLE,
@@ -148,7 +148,7 @@ export default function LandingPage() {
       <section className="px-6 md:px-12 pt-20 pb-16 text-center max-w-5xl mx-auto">
         <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs mb-6 font-medium"
           style={{ background: "#f3f0ff", border: "1px solid #e2dcfc", color: PURPLE }}>
-          ✨ Feito 100% pra TikTok Shop Brasil
+          ✨ Feito pra criadores e vendedores do Brasil
         </div>
         <h1 className="text-4xl md:text-6xl font-bold mb-6" style={{ letterSpacing: "-0.03em", lineHeight: 1.08 }}>
           De uma foto a um <span style={{ color: PURPLE }}>vídeo que vende</span>.<br/>Em minutos.
@@ -289,7 +289,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ── Depoimentos (placeholder estrutural) ── */}
+      {/* ── Depoimentos (placeholder estrutural, com avatar ilustrado — sem foto/nome fabricados) ── */}
       <section className="px-6 md:px-12 py-20">
         <div className="max-w-6xl mx-auto">
           <p className="text-xs font-bold text-center mb-3" style={{ color: PURPLE, letterSpacing: "0.1em" }}>DEPOIMENTOS</p>
@@ -297,17 +297,30 @@ export default function LandingPage() {
           <p className="text-center mb-14" style={{ color: "#6b6b80" }}>Em breve, veja o que nossos primeiros clientes estão dizendo.</p>
 
           <div className="grid md:grid-cols-3 gap-6">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="rounded-2xl p-7" style={{ background: "#faf9ff", border: "1.5px dashed #e2dcfc" }}>
+            {[
+              { icon: "🛍️", niche: "Loja de moda e acessórios", color: PURPLE },
+              { icon: "💄", niche: "Marca de beleza e cosméticos", color: GREEN },
+              { icon: "📈", niche: "Gestor de tráfego e criativos", color: "#3b82f6" },
+            ].map((card, i) => (
+              <div key={i} className="rounded-2xl p-7 relative overflow-hidden" style={{ background: "#faf9ff", border: "1px solid #f0eefb" }}>
+                <span className="absolute top-5 right-5 text-[10px] font-bold px-2.5 py-1 rounded-full"
+                  style={{ background: "#fef3e2", color: "#f59e0b" }}>
+                  Em breve
+                </span>
                 <div className="flex gap-1 mb-4">
-                  {[1,2,3,4,5].map(s => <span key={s} style={{ color: "#e2dcfc" }}>★</span>)}
+                  {[1,2,3,4,5].map(s => <span key={s} style={{ color: "#f5b942" }}>★</span>)}
                 </div>
-                <p className="text-sm mb-5" style={{ color: "#9a94b0" }}>Espaço reservado pro depoimento de um cliente real — em breve.</p>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full" style={{ background: "#e2dcfc" }} />
+                <p className="text-sm mb-6 leading-relaxed" style={{ color: "#4a4a5c" }}>
+                  "Espaço reservado pro depoimento real de um cliente do segmento de {card.niche.toLowerCase()}."
+                </p>
+                <div className="flex items-center gap-3 pt-4" style={{ borderTop: "1px solid #f0eefb" }}>
+                  <div className="w-11 h-11 rounded-full flex items-center justify-center text-lg flex-shrink-0"
+                    style={{ background: `${card.color}18` }}>
+                    {card.icon}
+                  </div>
                   <div>
-                    <p className="text-sm font-semibold" style={{ color: "#9a94b0" }}>Nome do cliente</p>
-                    <p className="text-xs" style={{ color: "#c4bee8" }}>Em breve</p>
+                    <p className="text-sm font-semibold" style={{ color: "#14141c" }}>{card.niche}</p>
+                    <p className="text-xs" style={{ color: "#9a94b0" }}>Depoimento em breve</p>
                   </div>
                 </div>
               </div>
