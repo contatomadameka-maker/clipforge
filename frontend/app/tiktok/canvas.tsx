@@ -2,14 +2,15 @@
 
 // ─────────────────────────────────────────────────────────────
 // frontend/app/tiktok/canvas.tsx
-// Canvas visual TikTok Shop — React Flow com blocos arrastáveis
+// Canvas visual — arquitetura modular (Mídia / Gerador / Resultado)
 // ─────────────────────────────────────────────────────────────
-// ARQUITETURA NOVA (Seedance 2.0 via Replicate):
-// Produto (foto) + Avatar (foto da persona) + Cenário (texto da cena)
-// + Copy (script/fala) → tudo isso vira UM prompt só, mandado pro
-// /seedance/generate. Não tem mais Kling (vídeo de fundo separado)
-// nem HeyGen (avatar falando separado) — o Seedance gera cena +
-// produto na mão + avatar falando com lip-sync, tudo numa chamada.
+// Redesenho inspirado no fluxo do PipClip: em vez de 5 blocos fixos
+// obrigatórios, o canvas agora tem 3 tipos de nó flexíveis:
+//   - Mídia    → uma imagem (produto ou persona), reaproveitável
+//   - Gerador  → painel único de configuração (tipo, cena, fala,
+//                duração, formato) que consome as Mídias conectadas
+//   - Resultado → aparece conectado automaticamente ao clicar em
+//                 "Gerar", mostra progresso e o vídeo final
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { ReactFlow,
@@ -30,738 +31,580 @@ import { ReactFlow,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
+const API = "https://clipforge-6yzz.onrender.com";
+
 // ── Tipos de bloco ────────────────────────────────────────────
 
-type BlockType = "produto" | "cenario" | "avatar" | "copy" | "gerar";
+type BlockType = "midia" | "gerador" | "resultado";
+type MidiaRole = "produto" | "persona";
 
 interface BlockData extends Record<string, unknown> {
   label: string;
   type: BlockType;
-  // produto
-  image?: string;
+  // midia
+  role?: MidiaRole;
+  imageUrl?: string;
   productName?: string;
   category?: string;
-  // cenario — agora é só descrição de texto da cena (Seedance gera tudo)
-  scenePrompt?: string;
-  // avatar — foto de persona é OPCIONAL (Seedance gera a pessoa
-  // inteira a partir da descrição em texto, testado e confirmado
-  // funcionando sem nenhuma imagem de rosto)
-  personaImageUrl?: string;
+  uploading?: boolean;
+  // gerador
+  tipo?: string; // por enquanto só "video_produto" (Seedance)
   personaDescription?: string;
-  personaName?: string;
+  scenePrompt?: string;
+  dialogue?: string;
+  duration?: string; // "5" | "10" | "15"
+  aspectRatio?: string;
+  resolution?: string;
   avatarStyle?: string;
-  language?: string;
-  // copy
-  script?: string;
-  duration?: string;
-  tone?: string;
-  // gerar
-  format?: string;
-  quality?: string;
-  status?: "idle" | "generating" | "done";
+  // resultado
+  status?: "processing" | "done" | "error";
   progress?: number;
   videoUrl?: string;
+  errorMsg?: string;
 }
 
-// ── Cores e ícones por tipo ───────────────────────────────────
-
-const BLOCK_CONFIG: Record<BlockType, { color: string; bg: string; icon: string; label: string; desc: string }> = {
-  produto:  { color: "#a99cf8", bg: "rgba(124,109,245,0.12)", icon: "🛍️", label: "Produto",  desc: "Imagem + nome" },
-  cenario:  { color: "#f59e0b", bg: "rgba(245,158,11,0.12)",  icon: "🎬", label: "Cenário",  desc: "Descreva a cena" },
-  avatar:   { color: "#3ecf8e", bg: "rgba(62,207,142,0.12)",  icon: "🧑‍🎤", label: "Avatar",   desc: "Foto da persona" },
-  copy:     { color: "#f87171", bg: "rgba(248,113,113,0.12)", icon: "✍️", label: "Copy",     desc: "O que falar" },
-  gerar:    { color: "#60a5fa", bg: "rgba(96,165,250,0.12)",  icon: "⚡", label: "Gerar",    desc: "Renderizar vídeo" },
+const ROLE_CONFIG: Record<MidiaRole, { color: string; icon: string; label: string }> = {
+  produto:  { color: "#a99cf8", icon: "🛍️", label: "Produto" },
+  persona:  { color: "#3ecf8e", icon: "🧑‍🎤", label: "Persona" },
 };
 
-// ── Handle estilizado ─────────────────────────────────────────
+const GERADOR_TIPOS: Record<string, { label: string; desc: string; credits: number }> = {
+  video_produto: { label: "Vídeo de Produto", desc: "Produto + persona (foto ou texto) + cena + fala, tudo em 1 geração", credits: 60 },
+};
+
+const CREDIT_COST: Record<string, number> = { "5": 30, "10": 60, "15": 90 };
 
 const handleStyle = {
-  width: 14,
-  height: 14,
-  background: "#7c6df5",
-  border: "3px solid #131318",
-  borderRadius: "50%",
-  cursor: "crosshair",
+  width: 14, height: 14, background: "#7c6df5",
+  border: "3px solid #131318", borderRadius: "50%", cursor: "crosshair",
 };
 
-// ── Bloco base ────────────────────────────────────────────────
+// ── Nó: Mídia ──────────────────────────────────────────────────
 
-function BaseBlock({ type, children, selected, onConfigure, onDelete }: {
-  type: BlockType;
-  children: React.ReactNode;
-  selected: boolean;
-  onConfigure: () => void;
-  onDelete: () => void;
-}) {
-  const cfg = BLOCK_CONFIG[type];
+function MidiaNode({ data, selected }: NodeProps) {
+  const d = data as BlockData;
+  const role = d.role || "produto";
+  const cfg = ROLE_CONFIG[role];
   return (
-    <div
-      className="relative rounded-2xl cursor-pointer transition-all duration-150"
-      style={{
-        width: 220,
-        background: "rgba(14,14,20,0.98)",
-        border: `1px solid ${selected ? cfg.color : "rgba(255,255,255,0.1)"}`,
-        boxShadow: selected
-          ? `0 0 0 2px ${cfg.color}33, 0 20px 40px rgba(0,0,0,0.5)`
-          : "0 4px 20px rgba(0,0,0,0.4)",
-      }}
-      onDoubleClick={onConfigure}
-    >
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0"
-          style={{ background: cfg.bg, border: `0.5px solid ${cfg.color}44` }}>
-          {cfg.icon}
+    <>
+      <Handle type="source" position={Position.Right} style={handleStyle} />
+      <div
+        className="relative rounded-2xl cursor-pointer transition-all duration-150"
+        style={{
+          width: 190,
+          background: "rgba(14,14,20,0.98)",
+          border: `1px solid ${selected ? cfg.color : "rgba(255,255,255,0.1)"}`,
+          boxShadow: selected ? `0 0 0 2px ${cfg.color}33, 0 20px 40px rgba(0,0,0,0.5)` : "0 4px 20px rgba(0,0,0,0.4)",
+        }}
+        onDoubleClick={() => (data as any).onConfigure?.()}
+      >
+        <div className="flex items-center gap-2 px-3 py-2.5" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div className="w-7 h-7 rounded-lg flex items-center justify-center text-sm flex-shrink-0"
+            style={{ background: `${cfg.color}22`, border: `0.5px solid ${cfg.color}44` }}>
+            {cfg.icon}
+          </div>
+          <p className="text-xs font-semibold flex-1" style={{ color: cfg.color }}>{cfg.label}</p>
+          <button className="w-5 h-5 rounded-md flex items-center justify-center border-none cursor-pointer"
+            style={{ background: "rgba(248,113,113,0.1)" }}
+            onClick={e => { e.stopPropagation(); (data as any).onDelete?.(); }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
         </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold leading-none mb-0.5" style={{ color: cfg.color }}>{cfg.label}</p>
-          <p className="text-[10px] leading-none" style={{ color: "#55556a" }}>{cfg.desc}</p>
+        <div className="p-2.5">
+          {d.imageUrl ? (
+            <div className="relative rounded-lg overflow-hidden" style={{ height: "90px" }}>
+              <img src={d.imageUrl} className="w-full h-full object-cover" alt="" />
+            </div>
+          ) : d.uploading ? (
+            <div className="flex flex-col items-center justify-center py-4 gap-1.5">
+              <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: `${cfg.color}33`, borderTopColor: cfg.color }} />
+              <p className="text-[10px] text-[#9090a8]">Enviando...</p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-4 gap-1">
+              <span className="text-xl">{cfg.icon}</span>
+              <p className="text-[10px] text-[#55556a]">Duplo clique p/ enviar</p>
+            </div>
+          )}
+          {d.productName && <p className="text-[10px] text-[#9090a8] mt-1.5 truncate">{d.productName}</p>}
+          {d.personaDescription && !d.imageUrl && (
+            <p className="text-[10px] text-[#9090a8] mt-1.5 line-clamp-2">{d.personaDescription}</p>
+          )}
         </div>
-        <button
-          className="w-6 h-6 rounded-md flex items-center justify-center border-none cursor-pointer transition-all hover:opacity-80"
-          style={{ background: "rgba(255,255,255,0.06)" }}
-          onClick={e => { e.stopPropagation(); onConfigure(); }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
-          </svg>
-        </button>
-        <button
-          className="w-6 h-6 rounded-md flex items-center justify-center border-none cursor-pointer transition-all hover:opacity-80"
-          style={{ background: "rgba(248,113,113,0.1)" }}
-          onClick={e => { e.stopPropagation(); onDelete(); }}
-          title="Deletar bloco"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
-          </svg>
-        </button>
       </div>
-      {/* Content */}
-      <div className="px-4 py-3">{children}</div>
-    </div>
+    </>
   );
 }
 
-// ── Nó: Produto ───────────────────────────────────────────────
+// ── Nó: Gerador ─────────────────────────────────────────────────
 
-function ProdutoNode({ data, selected }: NodeProps) {
+function GeradorNode({ data, selected }: NodeProps) {
+  const d = data as BlockData;
+  const tipo = GERADOR_TIPOS[d.tipo || "video_produto"];
+  const dur = d.duration || "10";
+  const cost = CREDIT_COST[dur] || 60;
+
+  return (
+    <>
+      <Handle type="target" position={Position.Left} style={handleStyle} />
+      <Handle type="source" position={Position.Right} style={handleStyle} />
+      <div
+        className="relative rounded-2xl cursor-pointer transition-all duration-150"
+        style={{
+          width: 260,
+          background: "rgba(14,14,20,0.98)",
+          border: `1px solid ${selected ? "#7c6df5" : "rgba(255,255,255,0.1)"}`,
+          boxShadow: selected ? "0 0 0 2px rgba(124,109,245,0.2), 0 20px 40px rgba(0,0,0,0.5)" : "0 4px 20px rgba(0,0,0,0.4)",
+        }}
+        onDoubleClick={() => (data as any).onConfigure?.()}
+      >
+        <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0"
+            style={{ background: "rgba(124,109,245,0.15)", border: "0.5px solid rgba(124,109,245,0.4)" }}>
+            ✨
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-[#a99cf8] leading-none mb-0.5">Gerador</p>
+            <p className="text-[10px] text-[#55556a] truncate">{tipo.label}</p>
+          </div>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>
+            {cost} cr
+          </span>
+          <button className="w-5 h-5 rounded-md flex items-center justify-center border-none cursor-pointer flex-shrink-0"
+            style={{ background: "rgba(248,113,113,0.1)" }}
+            onClick={e => { e.stopPropagation(); (data as any).onDelete?.(); }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div className="px-4 py-3 flex flex-col gap-2">
+          {d.scenePrompt ? (
+            <p className="text-[11px] text-[#9090a8] line-clamp-2">🎬 {d.scenePrompt}</p>
+          ) : (
+            <p className="text-[11px] text-[#55556a] italic">Duplo clique para configurar cena e fala</p>
+          )}
+          {d.dialogue && (
+            <p className="text-[11px] text-[#9090a8] line-clamp-2">💬 "{d.dialogue}"</p>
+          )}
+          <div className="flex items-center gap-1.5 mt-1">
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{dur}s</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{d.aspectRatio || "9:16"}</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{d.resolution || "720p"}</span>
+          </div>
+          <button type="button"
+            onClick={e => { e.stopPropagation(); (data as any).onGenerate?.(); }}
+            className="w-full h-9 rounded-[8px] text-xs font-semibold cursor-pointer border-none flex items-center justify-center gap-1.5 mt-1"
+            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5"><path d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Gerar ({cost} cr)
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Nó: Resultado ────────────────────────────────────────────────
+
+function ResultadoNode({ data }: NodeProps) {
   const d = data as BlockData;
   return (
     <>
-      <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="produto" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.image ? (
-          <div className="flex items-center gap-2.5">
-            <img src={d.image} className="w-10 h-10 rounded-lg object-cover flex-shrink-0" alt="" />
+      <Handle type="target" position={Position.Left} style={handleStyle} />
+      <div className="relative rounded-2xl" style={{ width: 220, background: "rgba(14,14,20,0.98)", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 4px 20px rgba(0,0,0,0.4)" }}>
+        <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0"
+            style={{ background: d.status === "done" ? "rgba(62,207,142,0.15)" : d.status === "error" ? "rgba(248,113,113,0.15)" : "rgba(96,165,250,0.15)" }}>
+            {d.status === "done" ? "✅" : d.status === "error" ? "⚠️" : "⏳"}
+          </div>
+          <div className="flex-1">
+            <p className="text-xs font-semibold text-[#f0f0f5]">Resultado</p>
+            <p className="text-[10px] text-[#55556a]">
+              {d.status === "done" ? "Pronto!" : d.status === "error" ? "Falhou" : "Gerando..."}
+            </p>
+          </div>
+          <button className="w-5 h-5 rounded-md flex items-center justify-center border-none cursor-pointer flex-shrink-0"
+            style={{ background: "rgba(248,113,113,0.1)" }}
+            onClick={e => { e.stopPropagation(); (data as any).onDelete?.(); }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+        </div>
+        <div className="px-4 py-3">
+          {d.status === "processing" && (
             <div>
-              <p className="text-xs font-medium text-[#f0f0f5] leading-tight">{d.productName || "Produto"}</p>
-              <p className="text-[10px] text-[#55556a]">{d.category || "Sem categoria"}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-1.5">
-            <div className="text-2xl">📷</div>
-            <p className="text-xs text-[#55556a]">Duplo clique para configurar</p>
-          </div>
-        )}
-      </BaseBlock>
-    </>
-  );
-}
-
-// ── Nó: Cenário (agora é só texto — Seedance gera a cena) ──────
-
-function CenarioNode({ data, selected }: NodeProps) {
-  const d = data as BlockData;
-  return (
-    <>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
-      <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="cenario" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.scenePrompt ? (
-          <div>
-            <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-3">{d.scenePrompt}</p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-1.5">
-            <div className="text-2xl">🎬</div>
-            <p className="text-xs text-[#55556a]">Duplo clique para descrever a cena</p>
-          </div>
-        )}
-      </BaseBlock>
-    </>
-  );
-}
-
-// ── Nó: Avatar (foto de persona, não mais HeyGen) ──────────────
-
-function AvatarNode({ data, selected }: NodeProps) {
-  const d = data as BlockData;
-  return (
-    <>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
-      <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="avatar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.personaImageUrl ? (
-          <div className="flex items-center gap-2.5">
-            <img src={d.personaImageUrl} className="w-10 h-10 rounded-full object-cover flex-shrink-0"
-              style={{ border: "0.5px solid rgba(62,207,142,0.3)" }} alt="" />
-            <div>
-              <p className="text-xs font-medium text-[#f0f0f5]">{d.personaName || "Persona"}</p>
-              <p className="text-[10px] text-[#55556a]">{d.avatarStyle || "Estilo não definido"}</p>
-            </div>
-          </div>
-        ) : d.personaDescription ? (
-          <div>
-            <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-3">{d.personaDescription}</p>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-1.5">
-            <div className="text-2xl">🧑‍🎤</div>
-            <p className="text-xs text-[#55556a]">Duplo clique para descrever a persona</p>
-          </div>
-        )}
-      </BaseBlock>
-    </>
-  );
-}
-
-// ── Nó: Copy ─────────────────────────────────────────────────
-
-function CopyNode({ data, selected }: NodeProps) {
-  const d = data as BlockData;
-  return (
-    <>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
-      <Handle type="source" position={Position.Right} style={handleStyle} />
-      <BaseBlock type="copy" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.script ? (
-          <div>
-            <p className="text-xs text-[#9090a8] leading-relaxed line-clamp-2">{d.script}</p>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
-                {d.duration || "10s"}
-              </span>
-              <span className="text-[10px] text-[#55556a]">{d.tone || "Animado"}</span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-1.5">
-            <div className="text-2xl">✍️</div>
-            <p className="text-xs text-[#55556a]">Duplo clique para configurar</p>
-          </div>
-        )}
-      </BaseBlock>
-    </>
-  );
-}
-
-// ── Nó: Gerar ────────────────────────────────────────────────
-
-function GerarNode({ data, selected }: NodeProps) {
-  const d = data as BlockData;
-  return (
-    <>
-      <Handle type="target" position={Position.Left} style={handleStyle} />
-      <BaseBlock type="gerar" selected={!!selected} onConfigure={() => (data as any).onConfigure?.()} onDelete={() => (data as any).onDelete?.()}>
-        {d.status === "generating" ? (
-          <div>
-            <div className="flex justify-between mb-1.5">
-              <span className="text-xs text-[#9090a8]">Gerando...</span>
-              <span className="text-xs text-[#60a5fa] font-medium">{d.progress || 0}%</span>
-            </div>
-            <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
-              <div className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${d.progress || 0}%`, background: "linear-gradient(90deg,#7c6df5,#3ecf8e)" }} />
-            </div>
-          </div>
-        ) : d.status === "done" ? (
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center"
-                style={{ background: "rgba(62,207,142,0.15)" }}>✅</div>
-              <div>
-                <p className="text-xs font-medium text-[#3ecf8e]">Pronto!</p>
-                <p className="text-[10px] text-[#55556a]">Vídeo gerado</p>
+              <div className="flex justify-between mb-1.5">
+                <span className="text-[10px] text-[#9090a8]">Criando algo incrível...</span>
+                <span className="text-[10px] text-[#60a5fa] font-medium">{d.progress || 0}%</span>
+              </div>
+              <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
+                <div className="h-full rounded-full transition-all duration-500" style={{ width: `${d.progress || 0}%`, background: "linear-gradient(90deg,#7c6df5,#3ecf8e)" }} />
               </div>
             </div>
-            {d.videoUrl && (
-              <video src={d.videoUrl} className="w-full rounded-lg" style={{ maxHeight: "140px" }} controls muted />
-            )}
-            {d.videoUrl && (
+          )}
+          {d.status === "done" && d.videoUrl && (
+            <div className="flex flex-col gap-2">
+              <video src={d.videoUrl} className="w-full rounded-lg" style={{ maxHeight: "160px" }} controls muted />
               <a href={d.videoUrl} target="_blank" rel="noopener noreferrer" download
                 className="flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[10px] font-medium no-underline"
                 style={{ background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
                 ⬇️ Baixar vídeo
               </a>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center py-3 gap-1.5">
-            <div className="text-2xl">⚡</div>
-            <p className="text-xs text-[#55556a]">{d.format || "9:16"} · {d.quality?.toUpperCase() || "HD"}</p>
-          </div>
-        )}
-      </BaseBlock>
+            </div>
+          )}
+          {d.status === "error" && (
+            <p className="text-[11px] text-[#f87171]">{d.errorMsg || "Erro desconhecido"}</p>
+          )}
+        </div>
+      </div>
     </>
   );
 }
 
-const nodeTypes = {
-  produto: ProdutoNode,
-  cenario: CenarioNode,
-  avatar: AvatarNode,
-  copy: CopyNode,
-  gerar: GerarNode,
-};
+const nodeTypes = { midia: MidiaNode, gerador: GeradorNode, resultado: ResultadoNode };
 
-// ── Painel de Cenário (agora só texto) ─────────────────────────
+// ── Painel de configuração — Mídia ──────────────────────────────
 
-function CenarioPicker({ node, update }: { node: Node<BlockData>; update: (patch: Partial<BlockData>) => void }) {
-  const TEMPLATES = [
-    { label: "🏋️ Academia lotada", prompt: "dentro de uma academia lotada, equipamentos ao fundo, iluminação quente, câmera na altura do peito" },
-    { label: "🏢 Estúdio clean", prompt: "em um estúdio de fotografia com fundo branco, iluminação suave e profissional" },
-    { label: "🌆 Rua urbana", prompt: "em uma rua movimentada da cidade durante o entardecer, luzes de fundo desfocadas" },
-    { label: "🏖️ Praia", prompt: "em uma praia ao pôr do sol, tons quentes, atmosfera serena" },
-    { label: "🏠 Sala de estar", prompt: "em uma sala de estar aconchegante, decoração moderna, luz natural pela janela" },
-    { label: "🍳 Cozinha", prompt: "em uma cozinha moderna e iluminada, bancada em destaque" },
-  ];
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Templates rápidos</label>
-        <div className="grid grid-cols-1 gap-1.5">
-          {TEMPLATES.map(t => (
-            <button key={t.label} type="button"
-              onClick={() => update({ scenePrompt: t.prompt })}
-              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none transition-all"
-              style={node.data.scenePrompt === t.prompt
-                ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" }
-                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Descreva a cena</label>
-        <textarea
-          value={node.data.scenePrompt || ""}
-          onChange={e => update({ scenePrompt: e.target.value })}
-          placeholder="Ex: dentro de uma academia lotada, câmera na altura do peito, iluminação quente..."
-          rows={5}
-          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }}
-        />
-        <p className="text-[10px] text-[#55556a] mt-1">O Seedance 2.0 vai gerar essa cena inteira com o avatar segurando o produto e falando — não precisa gerar nada aqui antes, isso acontece tudo no bloco Gerar.</p>
-      </div>
-    </div>
-  );
-}
-
-// ── Painel de Avatar (upload de foto de persona) ───────────────
-
-function AvatarPicker({ node, update, onUpdate }: {
-  node: Node<BlockData>;
-  update: (patch: Partial<BlockData>) => void;
-  onUpdate: (id: string, data: Partial<BlockData>) => void;
-}) {
+function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update: (p: Partial<BlockData>) => void; onUpdate: (id: string, p: Partial<BlockData>) => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState(false);
+  const role = node.data.role || "produto";
+  const cfg = ROLE_CONFIG[role];
 
-  async function uploadPersona(file: File) {
-    setUploading(true);
+  async function upload(file: File) {
+    onUpdate(node.id, { uploading: true } as any);
     try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`https://clipforge-6yzz.onrender.com/storage/upload/product-image`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Erro no upload");
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API}/storage/upload/product-image`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      onUpdate(node.id, { personaImageUrl: data.url } as any);
+      onUpdate(node.id, { imageUrl: data.url, uploading: false } as any);
     } catch {
       const reader = new FileReader();
-      reader.onload = ev => onUpdate(node.id, { personaImageUrl: ev.target?.result as string } as any);
+      reader.onload = ev => onUpdate(node.id, { imageUrl: ev.target?.result as string, uploading: false } as any);
       reader.readAsDataURL(file);
-    } finally {
-      setUploading(false);
     }
   }
 
-  const PERSONA_TEMPLATES = [
-    { label: "👩 Mulher, 30-40, fitness", text: "mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia" },
-    { label: "👨 Homem, 25-35, casual", text: "homem com seus 28 anos, barba curta, estilo casual, camiseta e jeans" },
-    { label: "👩 Mulher, 20-30, aesthetic", text: "mulher com seus 24 anos, cabelo solto, estilo aesthetic, roupa casual elegante" },
-    { label: "👨 Homem, 35-45, profissional", text: "homem com seus 40 anos, aparência profissional, camisa social" },
-  ];
-
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-[10px] px-3 py-2.5" style={{ background: "rgba(62,207,142,0.08)", border: "0.5px solid rgba(62,207,142,0.2)" }}>
-        <p className="text-[11px] text-[#3ecf8e] leading-relaxed">
-          ✨ Não precisa de foto — descreva a persona em texto (idade, cabelo, corpo, roupa) e o Seedance gera a pessoa inteira. Testado e funcionando sem imagem de rosto.
-        </p>
-      </div>
-
       <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Modelos rápidos</label>
-        <div className="grid grid-cols-1 gap-1.5">
-          {PERSONA_TEMPLATES.map(t => (
-            <button key={t.label} type="button"
-              onClick={() => update({ personaDescription: t.text })}
-              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none transition-all"
-              style={node.data.personaDescription === t.text
-                ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.4)" }
-                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              {t.label}
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Tipo</label>
+        <div className="flex gap-2">
+          {(Object.entries(ROLE_CONFIG) as [MidiaRole, typeof ROLE_CONFIG[MidiaRole]][]).map(([r, c]) => (
+            <button key={r} type="button" onClick={() => update({ role: r })}
+              className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none flex items-center justify-center gap-1.5"
+              style={role === r ? { background: `${c.color}22`, color: c.color, border: `0.5px solid ${c.color}66` } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              {c.icon} {c.label}
             </button>
           ))}
         </div>
       </div>
 
       <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Descrição da persona</label>
-        <textarea
-          value={node.data.personaDescription || ""}
-          onChange={e => update({ personaDescription: e.target.value })}
-          placeholder="Ex: mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia"
-          rows={4}
-          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }}
-        />
-      </div>
-
-      <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
-
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto de referência (opcional)</label>
-        <div
-          onClick={() => fileRef.current?.click()}
-          onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadPersona(file); }}
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto {role === "persona" ? "(opcional)" : ""}</label>
+        <div onClick={() => fileRef.current?.click()}
+          onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) upload(f); }}
           onDragOver={e => e.preventDefault()}
-          className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all hover:border-[#3ecf8e]"
-          style={{
-            height: node.data.personaImageUrl ? "160px" : "90px",
-            border: "1.5px dashed rgba(62,207,142,0.3)",
-            background: "rgba(62,207,142,0.04)",
-          }}>
-          {node.data.personaImageUrl ? (
-            <img src={node.data.personaImageUrl} className="w-full h-full object-contain rounded-xl" alt="" />
-          ) : uploading ? (
+          className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all"
+          style={{ height: node.data.imageUrl ? "180px" : "120px", border: `1.5px dashed ${cfg.color}44`, background: `${cfg.color}0a` }}>
+          {node.data.imageUrl ? (
+            <img src={node.data.imageUrl} className="w-full h-full object-contain rounded-xl" alt="" />
+          ) : node.data.uploading ? (
             <>
-              <div className="w-5 h-5 border-2 border-[#3ecf8e]/30 border-t-[#3ecf8e] rounded-full animate-spin mb-1.5" />
+              <div className="w-6 h-6 border-2 rounded-full animate-spin mb-2" style={{ borderColor: `${cfg.color}33`, borderTopColor: cfg.color }} />
               <p className="text-xs text-[#9090a8]">Enviando...</p>
             </>
           ) : (
             <>
-              <span className="text-xl mb-1">📷</span>
-              <p className="text-[11px] text-[#9090a8]">Só se quiser preservar um rosto específico</p>
+              <span className="text-2xl mb-1.5">{cfg.icon}</span>
+              <p className="text-xs text-[#9090a8]">Arraste ou clique para enviar</p>
             </>
           )}
         </div>
-        <input ref={fileRef} type="file" accept="image/*" className="hidden"
-          onChange={e => { const file = e.target.files?.[0]; if (file) uploadPersona(file); }} />
-        {node.data.personaImageUrl && (
-          <button type="button" onClick={() => onUpdate(node.id, { personaImageUrl: "" } as any)}
-            className="w-full mt-1.5 py-1.5 rounded-[6px] text-[10px] cursor-pointer border-none"
-            style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
-            Remover foto (usar só descrição)
+        <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) upload(f); }} />
+        {node.data.imageUrl && (
+          <button type="button" onClick={() => onUpdate(node.id, { imageUrl: "" } as any)}
+            className="w-full mt-1.5 py-1.5 rounded-[6px] text-[10px] cursor-pointer border-none" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+            Remover foto
           </button>
         )}
       </div>
 
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Estilo</label>
-        <div className="flex flex-col gap-1.5">
-          {["UGC unboxing", "Review", "Tutorial", "Oferta relâmpago"].map(s => (
-            <button key={s} type="button" onClick={() => update({ avatarStyle: s })}
-              className="flex items-center gap-2 px-3 py-2 rounded-[8px] text-xs cursor-pointer border-none text-left"
-              style={node.data.avatarStyle === s
-                ? { background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }
-                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              <div className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                style={{ background: node.data.avatarStyle === s ? "#3ecf8e" : "#55556a" }} />
-              {s}
-            </button>
-          ))}
+      {role === "produto" && (
+        <>
+          <div>
+            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Nome do produto</label>
+            <input type="text" value={node.data.productName || ""} onChange={e => update({ productName: e.target.value })}
+              placeholder="Ex: Fit Green"
+              className="w-full h-10 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Categoria</label>
+            <div className="flex flex-wrap gap-1.5">
+              {["Moda", "Beleza", "Tech", "Alimentos", "Outros"].map(cat => (
+                <button key={cat} type="button" onClick={() => update({ category: cat })}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
+                  style={node.data.category === cat ? { background: "rgba(124,109,245,0.2)", color: "#a99cf8", border: "0.5px solid rgba(124,109,245,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  {cat}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {role === "persona" && (
+        <div className="rounded-[10px] px-3 py-2.5" style={{ background: "rgba(62,207,142,0.08)", border: "0.5px solid rgba(62,207,142,0.2)" }}>
+          <p className="text-[11px] text-[#3ecf8e] leading-relaxed">
+            ✨ Não precisa de foto — se preferir, descreva a persona em texto direto no bloco Gerador (idade, cabelo, corpo, roupa). Testado e funcionando sem imagem de rosto.
+          </p>
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-// ── Painel lateral — configuração do bloco ────────────────────
+// ── Painel de configuração — Gerador ────────────────────────────
 
-function ConfigPanel({ node, onUpdate, onClose }: {
-  node: Node<BlockData>;
-  onUpdate: (id: string, data: Partial<BlockData>) => void;
-  onClose: () => void;
-}) {
-  const type = node.data.type;
-  const cfg = BLOCK_CONFIG[type];
-  const fileRef = useRef<HTMLInputElement>(null);
+function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Partial<BlockData>) => void }) {
+  const [promptMode, setPromptMode] = useState<"auto" | "avancado">("auto");
   const [generating, setGenerating] = useState(false);
 
-  async function uploadImage(file: File) {
-    onUpdate(node.id, { uploading: true } as any);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch(`https://clipforge-6yzz.onrender.com/storage/upload/product-image`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) throw new Error("Erro no upload");
-      const data = await res.json();
-      onUpdate(node.id, { image: data.url, imageKey: data.key, uploading: false } as any);
-    } catch {
-      const reader = new FileReader();
-      reader.onload = ev => onUpdate(node.id, { image: ev.target?.result as string, uploading: false } as any);
-      reader.readAsDataURL(file);
-    }
-  }
+  const SCENE_TEMPLATES = [
+    { label: "🏋️ Academia lotada", text: "dentro de uma academia lotada, câmera na altura do peito, iluminação quente" },
+    { label: "🏢 Estúdio clean", text: "em um estúdio de fotografia com fundo branco, iluminação suave e profissional" },
+    { label: "🌆 Rua urbana", text: "em uma rua movimentada da cidade durante o entardecer" },
+    { label: "🏠 Sala de estar", text: "em uma sala de estar aconchegante, luz natural pela janela" },
+  ];
 
-  function update(patch: Partial<BlockData>) {
-    onUpdate(node.id, patch);
-  }
+  const PERSONA_TEMPLATES = [
+    { label: "👩 Mulher, 30-40, fitness", text: "mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia" },
+    { label: "👨 Homem, 25-35, casual", text: "homem com seus 28 anos, barba curta, estilo casual" },
+    { label: "👩 Mulher, 20-30, aesthetic", text: "mulher com seus 24 anos, cabelo solto, estilo aesthetic" },
+  ];
 
   async function generateScript() {
     setGenerating(true);
     try {
-      const res = await fetch(`https://clipforge-6yzz.onrender.com/copy/generate-script`, {
+      const res = await fetch(`${API}/copy/generate-script`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          product_name: node.data.productName || "produto",
-          category: node.data.category || "Geral",
-          style: node.data.avatarStyle || "UGC unboxing",
-          tone: node.data.tone || "Animado",
-          duration: node.data.duration || "10s",
-          language: node.data.language || "pt-br",
+          product_name: "produto", category: "Geral", style: node.data.avatarStyle || "UGC unboxing",
+          tone: "Animado", duration: `${node.data.duration || "10"}s`, language: "pt-br",
         }),
       });
-      if (!res.ok) throw new Error("Erro na API");
+      if (!res.ok) throw new Error();
       const data = await res.json();
-      update({ script: data.script });
-    } catch (e) {
-      const fallbacks: Record<string, string> = {
-        "UGC unboxing": `Gente, esse ${node.data.productName || "produto"} chegou e eu precisei mostrar pra vocês! Qualidade incrível — aprovado! Corre no link da bio!`,
-        "Review": `Testei o ${node.data.productName || "produto"} por uma semana. Qualidade 10/10, entrega rápida. Altamente recomendo! Link na bio.`,
-        "Tutorial": `Vou te mostrar como usar o ${node.data.productName || "produto"} em 3 passos simples. Pegue o seu no link da bio!`,
-        "Oferta relâmpago": `Só até hoje! ${node.data.productName || "Produto"} com desconto especial. Estoque limitado — link na bio!`,
-      };
-      update({ script: fallbacks[node.data.avatarStyle || ""] || `Confira o incrível ${node.data.productName || "produto"}! Link na bio!` });
+      update({ dialogue: data.script });
+    } catch {
+      update({ dialogue: "Gente, esse produto mudou minha rotina! Resultado real em poucas semanas. Corre no link da bio!" });
     } finally {
       setGenerating(false);
     }
   }
 
   return (
-    <div className="absolute top-0 right-0 h-full w-80 flex flex-col z-50 overflow-hidden"
-      style={{ background: "rgba(11,11,17,0.99)", borderLeft: "0.5px solid rgba(255,255,255,0.08)" }}>
-
-      <div className="flex items-center gap-3 px-5 py-4 flex-shrink-0"
-        style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
-        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base"
-          style={{ background: cfg.bg, border: `0.5px solid ${cfg.color}44` }}>
-          {cfg.icon}
+    <div className="flex flex-col gap-4">
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tipo</label>
+        <div className="rounded-[8px] px-3 py-2.5 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+          <span className="text-sm text-[#f0f0f5]">Vídeo de Produto</span>
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{CREDIT_COST[node.data.duration || "10"] || 60} cr</span>
         </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-[#f0f0f5]">Configurar {cfg.label}</p>
-          <p className="text-[10px] text-[#55556a]">Duplo clique no bloco para editar</p>
-        </div>
-        <button onClick={onClose}
-          className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a] hover:text-[#f0f0f5] transition-colors"
-          style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+        <p className="text-[10px] text-[#55556a] mt-1">Conecte um bloco Mídia (Produto) ao Gerador. Persona é opcional — se não conectar foto, descreva em texto abaixo.</p>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
+      <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
 
-        {type === "produto" && (
-          <>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Foto do produto</label>
-              <div
-                onClick={() => fileRef.current?.click()}
-                onDrop={e => { e.preventDefault(); const file = e.dataTransfer.files[0]; if (file) uploadImage(file); }}
-                onDragOver={e => e.preventDefault()}
-                className="flex flex-col items-center justify-center rounded-xl cursor-pointer transition-all hover:border-[#7c6df5]"
-                style={{
-                  height: node.data.image ? "180px" : "120px",
-                  border: "1.5px dashed rgba(124,109,245,0.3)",
-                  background: "rgba(124,109,245,0.04)",
-                  position: "relative",
-                }}>
-                {node.data.image ? (
-                  <img src={node.data.image} className="w-full h-full object-contain rounded-xl" alt="" />
-                ) : (node.data as any).uploading ? (
-                  <>
-                    <div className="w-6 h-6 border-2 border-[#7c6df5]/30 border-t-[#7c6df5] rounded-full animate-spin mb-2" />
-                    <p className="text-xs text-[#9090a8]">Enviando...</p>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-2xl mb-1.5">📷</span>
-                    <p className="text-xs text-[#9090a8]">Arraste ou clique para enviar</p>
-                    <p className="text-[10px] text-[#55556a]">JPG, PNG até 10MB</p>
-                  </>
-                )}
-              </div>
-              <input ref={fileRef} type="file" accept="image/*" className="hidden"
-                onChange={e => { const file = e.target.files?.[0]; if (file) uploadImage(file); }} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Nome do produto</label>
-              <input type="text" value={node.data.productName || ""} onChange={e => update({ productName: e.target.value })}
-                placeholder="Ex: Tênis Nike Air Max"
-                className="w-full h-10 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
-                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Categoria</label>
-              <div className="flex flex-wrap gap-1.5">
-                {["Moda", "Beleza", "Tech", "Alimentos", "Outros"].map(cat => (
-                  <button key={cat} type="button" onClick={() => update({ category: cat })}
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none transition-all"
-                    style={node.data.category === cat
-                      ? { background: "rgba(124,109,245,0.2)", color: "#a99cf8", border: "0.5px solid rgba(124,109,245,0.4)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {cat}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
-
-        {type === "cenario" && (
-          <CenarioPicker node={node} update={update} />
-        )}
-
-        {type === "avatar" && (
-          <AvatarPicker node={node} update={update} onUpdate={onUpdate} />
-        )}
-
-        {type === "copy" && (
-          <>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Duração</label>
-              <div className="flex gap-2">
-                {["5s", "10s", "15s"].map(d => (
-                  <button key={d} type="button" onClick={() => update({ duration: d })}
-                    className="flex-1 py-2 rounded-[8px] text-xs font-bold cursor-pointer border-none"
-                    style={node.data.duration === d
-                      ? { background: "rgba(248,113,113,0.2)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.4)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {d}
-                  </button>
-                ))}
-              </div>
-              <p className="text-[10px] text-[#55556a] mt-1">O Seedance 2.0 aceita de 4 a 15 segundos por geração.</p>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tom de voz</label>
-              <div className="flex flex-wrap gap-1.5">
-                {["Animado", "Natural", "Profissional", "Divertido"].map(t => (
-                  <button key={t} type="button" onClick={() => update({ tone: t })}
-                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium cursor-pointer border-none"
-                    style={node.data.tone === t
-                      ? { background: "rgba(248,113,113,0.2)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.4)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {t}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-medium text-[#9090a8]">Script (o que o avatar vai falar)</label>
-                <button type="button" onClick={generateScript} disabled={generating}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none disabled:opacity-40"
-                  style={{ background: "rgba(248,113,113,0.1)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.2)" }}>
-                  {generating ? "Gerando..." : "✨ Gerar com IA"}
-                </button>
-              </div>
-              <textarea value={node.data.script || ""} onChange={e => update({ script: e.target.value })}
-                placeholder="Digite o script ou gere com IA..."
-                rows={6}
-                className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
-                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-              <p className="text-[10px] text-[#55556a] mt-1">Esse texto vai entrar entre aspas no prompt do Seedance — é literalmente a fala do avatar no vídeo.</p>
-            </div>
-          </>
-        )}
-
-        {type === "gerar" && (
-          <>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Formato</label>
-              <div className="flex gap-2">
-                {[{ id: "9:16", label: "9:16 📱" }, { id: "1:1", label: "1:1 ⬜" }, { id: "16:9", label: "16:9 🖥️" }].map(f => (
-                  <button key={f.id} type="button" onClick={() => update({ format: f.id })}
-                    className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none"
-                    style={node.data.format === f.id
-                      ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {f.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Qualidade</label>
-              <div className="flex gap-2">
-                {["720p", "1080p"].map(q => (
-                  <button key={q} type="button" onClick={() => update({ quality: q })}
-                    className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none"
-                    style={node.data.quality === q
-                      ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" }
-                      : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    {q}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </>
-        )}
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Persona (se não conectou foto)</label>
+        <div className="grid grid-cols-1 gap-1.5 mb-2">
+          {PERSONA_TEMPLATES.map(t => (
+            <button key={t.label} type="button" onClick={() => update({ personaDescription: t.text })}
+              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+              style={node.data.personaDescription === t.text ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <textarea value={node.data.personaDescription || ""} onChange={e => update({ personaDescription: e.target.value })}
+          placeholder="Ex: mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia"
+          rows={3}
+          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
       </div>
 
-      <div className="px-5 py-4 flex-shrink-0" style={{ borderTop: "0.5px solid rgba(255,255,255,0.07)" }}>
-        <button type="button" onClick={onClose}
-          className="w-full h-10 rounded-[8px] text-sm font-semibold cursor-pointer border-none transition-all hover:opacity-90"
-          style={{ background: "#7c6df5", color: "#fff" }}>
-          Aplicar
-        </button>
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-2">Cena</label>
+        <div className="grid grid-cols-1 gap-1.5 mb-2">
+          {SCENE_TEMPLATES.map(t => (
+            <button key={t.label} type="button" onClick={() => update({ scenePrompt: t.text })}
+              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+              style={node.data.scenePrompt === t.text ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <textarea value={node.data.scenePrompt || ""} onChange={e => update({ scenePrompt: e.target.value })}
+          placeholder="Descreva a cena..." rows={3}
+          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+      </div>
+
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-xs font-medium text-[#9090a8]">Fala do avatar</label>
+          <button type="button" onClick={generateScript} disabled={generating}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none disabled:opacity-40"
+            style={{ background: "rgba(248,113,113,0.1)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.2)" }}>
+            {generating ? "Gerando..." : "✨ Gerar com IA"}
+          </button>
+        </div>
+        <textarea value={node.data.dialogue || ""} onChange={e => update({ dialogue: e.target.value })}
+          placeholder='Ex: "Esse produto mudou minha vida, perdi 10kg em 30 dias..."' rows={4}
+          className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
+          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+      </div>
+
+      <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Duração: {node.data.duration || "10"}s ({CREDIT_COST[node.data.duration || "10"]} cr)</label>
+        <input type="range" min={5} max={15} step={5} value={parseInt(node.data.duration || "10")}
+          onChange={e => update({ duration: e.target.value })}
+          className="w-full" />
+        <div className="flex justify-between text-[10px] text-[#55556a] mt-1"><span>5s</span><span>10s</span><span>15s</span></div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Formato</label>
+        <div className="flex gap-2">
+          {[{ id: "9:16", l: "9:16 📱" }, { id: "1:1", l: "1:1 ⬜" }, { id: "16:9", l: "16:9 🖥️" }].map(f => (
+            <button key={f.id} type="button" onClick={() => update({ aspectRatio: f.id })}
+              className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none"
+              style={node.data.aspectRatio === f.id ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              {f.l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Resolução</label>
+        <div className="flex gap-2">
+          {["720p", "1080p"].map(q => (
+            <button key={q} type="button" onClick={() => update({ resolution: q })}
+              className="flex-1 py-2 rounded-[8px] text-xs font-semibold cursor-pointer border-none"
+              style={node.data.resolution === q ? { background: "rgba(96,165,250,0.2)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              {q}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Barra lateral de blocos ───────────────────────────────────
+// ── Painel lateral genérico ──────────────────────────────────
 
-function BlockSidebar({ onAdd }: { onAdd: (type: BlockType) => void }) {
+function ConfigPanel({ node, onUpdate, onClose }: { node: Node<BlockData>; onUpdate: (id: string, p: Partial<BlockData>) => void; onClose: () => void }) {
+  const type = node.data.type;
+  const titles: Record<BlockType, { icon: string; label: string }> = {
+    midia: { icon: ROLE_CONFIG[node.data.role || "produto"].icon, label: "Mídia" },
+    gerador: { icon: "✨", label: "Gerador" },
+    resultado: { icon: "✅", label: "Resultado" },
+  };
+  const t = titles[type];
+
+  function update(patch: Partial<BlockData>) { onUpdate(node.id, patch); }
+
   return (
-    <div className="absolute top-1/2 left-3 -translate-y-1/2 flex flex-col gap-2 z-50">
-      {(Object.entries(BLOCK_CONFIG) as [BlockType, typeof BLOCK_CONFIG[BlockType]][]).map(([type, cfg]) => (
-        <button
-          key={type}
-          type="button"
-          onClick={() => onAdd(type)}
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-lg cursor-pointer border-none transition-all hover:scale-110 active:scale-95"
-          style={{ background: cfg.bg, border: `0.5px solid ${cfg.color}44`, boxShadow: "0 2px 8px rgba(0,0,0,0.3)" }}
-          title={`Adicionar ${cfg.label} — ${cfg.desc}`}
-          draggable
-          onDragStart={e => e.dataTransfer.setData("blockType", type)}
-        >
-          {cfg.icon}
-        </button>
-      ))}
+    <div className="absolute top-0 right-0 h-full w-80 flex flex-col z-50 overflow-hidden"
+      style={{ background: "rgba(11,11,17,0.99)", borderLeft: "0.5px solid rgba(255,255,255,0.08)" }}>
+      <div className="flex items-center gap-3 px-5 py-4 flex-shrink-0" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base" style={{ background: "rgba(124,109,245,0.15)" }}>{t.icon}</div>
+        <div className="flex-1"><p className="text-sm font-semibold text-[#f0f0f5]">Configurar {t.label}</p></div>
+        <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a] hover:text-[#f0f0f5]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto px-5 py-4">
+        {type === "midia" && <MidiaPanel node={node} update={update} onUpdate={onUpdate} />}
+        {type === "gerador" && <GeradorPanel node={node} update={update} />}
+        {type === "resultado" && (
+          <p className="text-xs text-[#9090a8]">Esse bloco é só de visualização — ele aparece automaticamente quando você clica em "Gerar" no bloco Gerador.</p>
+        )}
+      </div>
+      <div className="px-5 py-4 flex-shrink-0" style={{ borderTop: "0.5px solid rgba(255,255,255,0.07)" }}>
+        <button type="button" onClick={onClose} className="w-full h-10 rounded-[8px] text-sm font-semibold cursor-pointer border-none" style={{ background: "#7c6df5", color: "#fff" }}>Aplicar</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Modal "Adicionar Componente" ────────────────────────────────
+
+function AddComponentModal({ onAdd, onClose }: { onAdd: (type: BlockType, role?: MidiaRole) => void; onClose: () => void }) {
+  const [tab, setTab] = useState<"midia" | "gerador">("midia");
+  return (
+    <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-lg mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          <div>
+            <p className="text-base font-bold text-[#f0f0f5]">+ Adicionar Componente</p>
+            <p className="text-[11px] text-[#55556a]">Escolha o tipo de bloco para o seu workflow</p>
+          </div>
+          <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+        </div>
+        <div className="flex" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+          {[{ id: "midia" as const, l: "🖼️ Mídia" }, { id: "gerador" as const, l: "✨ Gerador" }].map(tb => (
+            <button key={tb.id} onClick={() => setTab(tb.id)}
+              className="flex-1 py-3 text-sm font-medium cursor-pointer border-none"
+              style={tab === tb.id ? { background: "rgba(124,109,245,0.1)", color: "#a99cf8", borderBottom: "2px solid #7c6df5" } : { background: "transparent", color: "#9090a8" }}>
+              {tb.l}
+            </button>
+          ))}
+        </div>
+        <div className="p-4 flex flex-col gap-2 max-h-96 overflow-y-auto">
+          {tab === "midia" && (
+            <>
+              <button onClick={() => onAdd("midia", "produto")} className="text-left px-4 py-3 rounded-[10px] cursor-pointer border-none flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                <div><p className="text-sm font-medium text-[#f0f0f5]">🛍️ Produto</p><p className="text-[11px] text-[#55556a]">Foto do produto que aparece no vídeo</p></div>
+              </button>
+              <button onClick={() => onAdd("midia", "persona")} className="text-left px-4 py-3 rounded-[10px] cursor-pointer border-none flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                <div><p className="text-sm font-medium text-[#f0f0f5]">🧑‍🎤 Persona</p><p className="text-[11px] text-[#55556a]">Foto do avatar (opcional — pode descrever em texto)</p></div>
+              </button>
+            </>
+          )}
+          {tab === "gerador" && (
+            <button onClick={() => onAdd("gerador")} className="text-left px-4 py-3 rounded-[10px] cursor-pointer border-none flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <div><p className="text-sm font-medium text-[#f0f0f5]">✨ Vídeo de Produto</p><p className="text-[11px] text-[#55556a]">Produto + persona + cena + fala → vídeo com áudio nativo</p></div>
+              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>60 cr</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Biblioteca de Mídia ─────────────────────────────────────────
+
+function MediaLibrary({ nodes, onClose }: { nodes: Node<BlockData>[]; onClose: () => void }) {
+  const items = nodes.filter(n => (n.data.type === "midia" && n.data.imageUrl) || (n.data.type === "resultado" && n.data.videoUrl));
+  return (
+    <div className="absolute top-0 right-0 h-full w-72 flex flex-col z-40" style={{ background: "rgba(11,11,17,0.99)", borderLeft: "0.5px solid rgba(255,255,255,0.08)" }}>
+      <div className="flex items-center justify-between px-4 py-3.5" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+        <div><p className="text-sm font-semibold text-[#f0f0f5]">Biblioteca de Mídia</p><p className="text-[10px] text-[#55556a]">{items.length} item{items.length !== 1 ? "s" : ""}</p></div>
+        <button onClick={onClose} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+      </div>
+      <div className="flex-1 overflow-y-auto p-3 grid grid-cols-2 gap-2">
+        {items.length === 0 && <p className="text-[11px] text-[#55556a] col-span-2 text-center py-8">Nada por aqui ainda.</p>}
+        {items.map(n => (
+          <div key={n.id} className="rounded-lg overflow-hidden" style={{ height: "80px", background: "rgba(255,255,255,0.04)" }}>
+            {n.data.type === "midia" ? <img src={n.data.imageUrl} className="w-full h-full object-cover" alt="" /> : <video src={n.data.videoUrl} className="w-full h-full object-cover" muted />}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -771,22 +614,16 @@ function BlockSidebar({ onAdd }: { onAdd: (type: BlockType) => void }) {
 let nodeId = 10;
 const nextId = () => `node_${nodeId++}`;
 
-const initialNodes: Node[] = [
-  {
-    id: "node_1",
-    type: "produto",
-    position: { x: 80, y: 200 },
-    data: { type: "produto", label: "Produto", category: "Moda" } as BlockData,
-  },
-];
-
 export default function TikTokCanvasInner() {
-  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node<BlockData>>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [rfInstance, setRfInstance] = useState<any>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [showLibrary, setShowLibrary] = useState(false);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [userCredits, setUserCredits] = useState<number>(50);
+  const [creditModal, setCreditModal] = useState<{ needed: number; have: number } | null>(null);
 
   useEffect(() => {
     try {
@@ -794,216 +631,104 @@ export default function TikTokCanvasInner() {
       if (sb) {
         sb.auth.getUser().then(({ data }: any) => {
           if (data?.user) {
-            fetch(`https://clipforge-6yzz.onrender.com/credits/${data.user.id}`)
-              .then(r => r.json())
-              .then(d => { if (d.balance !== undefined) setUserCredits(d.balance); })
-              .catch(() => {});
+            fetch(`${API}/credits/${data.user.id}`).then(r => r.json()).then(d => { if (d.balance !== undefined) setUserCredits(d.balance); }).catch(() => {});
           }
         });
       }
     } catch {}
   }, []);
 
-  const onConnect = useCallback(
-    (params: Connection) => setEdges(eds => addEdge({ ...params, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds)),
-    [setEdges]
-  );
+  const onConnect = useCallback((params: Connection) => setEdges(eds => addEdge({ ...params, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds)), [setEdges]);
 
-  function addNode(type: BlockType, position?: { x: number; y: number }) {
+  function addNode(type: BlockType, role?: MidiaRole, position?: { x: number; y: number }) {
     const id = nextId();
     const pos = position || { x: 300 + Math.random() * 200, y: 100 + Math.random() * 300 };
-    const newNode: Node = {
-      id,
-      type,
-      position: pos,
-      data: {
-        type,
-        label: BLOCK_CONFIG[type].label,
-        duration: "10s",
-        tone: "Animado",
-        format: "9:16",
-        quality: "720p",
-        language: "pt-br",
-        avatarStyle: "UGC unboxing",
-        status: "idle",
-      } as BlockData,
-    };
-    setNodes(nds => [...nds, newNode]);
+    const base: BlockData = { type, label: type };
+    if (type === "midia") { base.role = role; }
+    if (type === "gerador") { base.tipo = "video_produto"; base.duration = "10"; base.aspectRatio = "9:16"; base.resolution = "720p"; }
+    setNodes(nds => [...nds, { id, type, position: pos, data: base }]);
     setSelectedNodeId(id);
+    setShowAddModal(false);
   }
 
   function updateNodeData(id: string, patch: Partial<BlockData>) {
     setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
   }
 
-  const API = "https://clipforge-6yzz.onrender.com";
+  async function handleGenerate(geradorId: string) {
+    const geradorNode = nodes.find(n => n.id === geradorId);
+    if (!geradorNode) return;
 
-  const [creditModal, setCreditModal] = useState<{ needed: number; have: number } | null>(null);
-
-  const CREDIT_COST: Record<string, number> = {
-    "5s": 8, "10s": 15, "15s": 20,
-  };
-
-  async function handleGerarTodos() {
-    const gerarNodes = nodes.filter(n => n.data.type === "gerar");
-    if (gerarNodes.length === 0) {
-      alert("Adicione pelo menos um bloco Gerar ao canvas!");
-      return;
+    const connectedEdges = edges.filter(e => e.target === geradorId);
+    let productImageUrl = "";
+    let personaImageUrl = "";
+    for (const edge of connectedEdges) {
+      const source = nodes.find(n => n.id === edge.source);
+      if (!source || source.data.type !== "midia") continue;
+      if (source.data.role === "produto") productImageUrl = (source.data.imageUrl as string) || "";
+      if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
     }
 
-    let totalCredits = 0;
-    for (const gerarNode of gerarNodes) {
-      const connectedEdges = edges.filter(e => e.target === gerarNode.id);
-      let duration = "10s";
-      for (const edge of connectedEdges) {
-        const source = nodes.find(n => n.id === edge.source);
-        if (source?.data.type === "copy" && source.data.duration) duration = source.data.duration as string;
-        const indirect = edges.filter(e => e.target === source?.id);
-        for (const ie of indirect) {
-          const up = nodes.find(n => n.id === ie.source);
-          if (up?.data.type === "copy" && up.data.duration) duration = up.data.duration as string;
-        }
-      }
-      totalCredits += CREDIT_COST[duration] || 15;
-    }
+    const personaDescription = (geradorNode.data.personaDescription as string) || "";
+    const scenePrompt = (geradorNode.data.scenePrompt as string) || "";
+    const dialogue = (geradorNode.data.dialogue as string) || "";
+    const duration = (geradorNode.data.duration as string) || "10";
+    const cost = CREDIT_COST[duration] || 60;
 
-    if (totalCredits > userCredits) {
-      setCreditModal({ needed: totalCredits, have: userCredits });
-      return;
-    }
+    if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
+    if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
+    if (!personaImageUrl && !personaDescription) { alert("Conecte uma foto de Persona OU descreva a persona em texto no Gerador!"); return; }
 
-    const confirmed = window.confirm(
-      `Gerar ${gerarNodes.length} vídeo${gerarNodes.length > 1 ? "s" : ""}?\n\nCusto: ${totalCredits} créditos\nSaldo atual: ${userCredits} créditos\nSaldo após: ${userCredits - totalCredits} créditos`
-    );
-    if (!confirmed) return;
+    if (cost > userCredits) { setCreditModal({ needed: cost, have: userCredits }); return; }
+    if (!window.confirm(`Gerar vídeo por ${cost} créditos?\nSaldo atual: ${userCredits}\nSaldo após: ${userCredits - cost}`)) return;
 
-    for (const gerarNode of gerarNodes) {
-      const connectedEdges = edges.filter(e => e.target === gerarNode.id);
-      let productImageUrl = "";
-      let personaImageUrl = "";
-      let personaDescription = "";
-      let scenePrompt = "";
-      let dialogue = "";
-      let duration = "10";
+    // Cria o nó Resultado conectado
+    const resultId = nextId();
+    const resultPos = { x: geradorNode.position.x + 320, y: geradorNode.position.y };
+    setNodes(nds => [...nds, { id: resultId, type: "resultado", position: resultPos, data: { type: "resultado", label: "Resultado", status: "processing", progress: 10 } }]);
+    setEdges(eds => addEdge({ id: `e-${geradorId}-${resultId}`, source: geradorId, target: resultId, animated: true, style: { stroke: "#7c6df5", strokeWidth: 2 } }, eds));
 
-      for (const edge of connectedEdges) {
-        const sourceNode = nodes.find(n => n.id === edge.source);
-        if (!sourceNode) continue;
-        if (sourceNode.data.type === "copy") {
-          dialogue = (sourceNode.data.script as string) || "";
-          duration = ((sourceNode.data.duration as string) || "10s").replace("s", "");
-        }
-        if (sourceNode.data.type === "avatar") {
-          personaImageUrl = (sourceNode.data as any).personaImageUrl || "";
-          personaDescription = (sourceNode.data as any).personaDescription || "";
-        }
-        if (sourceNode.data.type === "cenario") {
-          scenePrompt = (sourceNode.data as any).scenePrompt || "";
-        }
-        // Busca indiretamente (produto -> avatar -> copy -> cenario encadeados)
-        const indirectEdges = edges.filter(e => e.target === sourceNode.id);
-        for (const ie of indirectEdges) {
-          const upstreamNode = nodes.find(n => n.id === ie.source);
-          if (!upstreamNode) continue;
-          if (upstreamNode.data.type === "produto") productImageUrl = (upstreamNode.data.image as string) || "";
-          if (upstreamNode.data.type === "avatar") {
-            personaImageUrl = (upstreamNode.data as any).personaImageUrl || "";
-            personaDescription = (upstreamNode.data as any).personaDescription || "";
+    try {
+      const res = await fetch(`${API}/seedance/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          product_image_url: productImageUrl,
+          persona_image_url: personaImageUrl || null,
+          persona_description: personaDescription || null,
+          scene_prompt: scenePrompt || "fundo neutro, iluminação profissional",
+          dialogue,
+          aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+          duration,
+          resolution: (geradorNode.data.resolution as string) || "720p",
+        }),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Erro ao iniciar geração"); }
+      const data = await res.json();
+      const taskId = data.task_id;
+
+      updateNodeData(resultId, { progress: 25 });
+
+      let attempts = 0;
+      const maxAttempts = 60;
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const statusRes = await fetch(`${API}/seedance/status/${taskId}`);
+          const statusData = await statusRes.json();
+          updateNodeData(resultId, { progress: Math.min(25 + attempts * 3, 95) });
+
+          if (statusData.status === "done") {
+            clearInterval(poll);
+            updateNodeData(resultId, { status: "done", progress: 100, videoUrl: statusData.video_url });
+          } else if (statusData.status === "error" || attempts > maxAttempts) {
+            clearInterval(poll);
+            updateNodeData(resultId, { status: "error", errorMsg: statusData.error || "Timeout aguardando geração" });
           }
-          if (upstreamNode.data.type === "cenario") scenePrompt = (upstreamNode.data as any).scenePrompt || "";
-          if (upstreamNode.data.type === "copy") dialogue = (upstreamNode.data.script as string) || "";
-
-          // mais um nível pra trás (produto conectado no avatar, avatar no cenario, etc)
-          const deeperEdges = edges.filter(e => e.target === upstreamNode.id);
-          for (const de of deeperEdges) {
-            const deepNode = nodes.find(n => n.id === de.source);
-            if (!deepNode) continue;
-            if (deepNode.data.type === "produto") productImageUrl = (deepNode.data.image as string) || "";
-          }
-        }
-      }
-
-      if (!productImageUrl || !dialogue) {
-        alert("Bloco Gerar precisa estar conectado (direta ou indiretamente) a um Produto com foto e uma Copy com script!");
-        continue;
-      }
-      if (!personaImageUrl && !personaDescription) {
-        alert("Bloco Avatar precisa ter uma foto OU uma descrição da persona preenchida!");
-        continue;
-      }
-
-      setNodes(nds => nds.map(n => n.id === gerarNode.id
-        ? { ...n, data: { ...n.data, status: "generating", progress: 10 } }
-        : n
-      ));
-
-      try {
-        const res = await fetch(`${API}/seedance/generate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            product_image_url: productImageUrl,
-            persona_image_url: personaImageUrl || null,
-            persona_description: personaDescription || null,
-            scene_prompt: scenePrompt || "fundo neutro, iluminação profissional",
-            dialogue,
-            aspect_ratio: (gerarNode.data.format as string) || "9:16",
-            duration,
-            resolution: (gerarNode.data.quality as string) || "720p",
-          }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.detail || "Erro ao iniciar geração");
-        }
-        const data = await res.json();
-        const taskId = data.task_id;
-
-        setNodes(nds => nds.map(n => n.id === gerarNode.id
-          ? { ...n, data: { ...n.data, status: "generating", progress: 25 } }
-          : n
-        ));
-
-        // Polling — Seedance costuma levar de 1 a 3 min pra 10-15s de vídeo
-        let attempts = 0;
-        const maxAttempts = 60; // ~5 minutos de margem
-        const poll = setInterval(async () => {
-          attempts++;
-          try {
-            const statusRes = await fetch(`${API}/seedance/status/${taskId}`);
-            const statusData = await statusRes.json();
-
-            const progress = Math.min(25 + attempts * 3, 95);
-            setNodes(nds => nds.map(n => n.id === gerarNode.id
-              ? { ...n, data: { ...n.data, progress } }
-              : n
-            ));
-
-            if (statusData.status === "done") {
-              clearInterval(poll);
-              setNodes(nds => nds.map(n => n.id === gerarNode.id
-                ? { ...n, data: { ...n.data, status: "done", progress: 100, videoUrl: statusData.video_url } }
-                : n
-              ));
-            } else if (statusData.status === "error" || attempts > maxAttempts) {
-              clearInterval(poll);
-              setNodes(nds => nds.map(n => n.id === gerarNode.id
-                ? { ...n, data: { ...n.data, status: "idle", progress: 0 } }
-                : n
-              ));
-              alert(`Falha na geração do vídeo: ${statusData.error || "timeout"}`);
-            }
-          } catch { clearInterval(poll); }
-        }, 5000);
-
-      } catch (e: any) {
-        setNodes(nds => nds.map(n => n.id === gerarNode.id
-          ? { ...n, data: { ...n.data, status: "idle", progress: 0 } }
-          : n
-        ));
-        alert(`Erro ao gerar vídeo: ${e.message}`);
-      }
+        } catch { clearInterval(poll); }
+      }, 5000);
+    } catch (e: any) {
+      updateNodeData(resultId, { status: "error", errorMsg: e.message });
     }
   }
 
@@ -1012,6 +737,7 @@ export default function TikTokCanvasInner() {
     data: {
       ...n.data,
       onConfigure: () => setSelectedNodeId(n.id),
+      onGenerate: () => handleGenerate(n.id),
       onDelete: () => {
         setNodes(nds => nds.filter(node => node.id !== n.id));
         setEdges(eds => eds.filter(e => e.source !== n.id && e.target !== n.id));
@@ -1025,10 +751,11 @@ export default function TikTokCanvasInner() {
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
     const type = e.dataTransfer.getData("blockType") as BlockType;
+    const role = e.dataTransfer.getData("role") as MidiaRole | undefined;
     if (!type || !rfInstance || !reactFlowWrapper.current) return;
     const bounds = reactFlowWrapper.current.getBoundingClientRect();
     const pos = rfInstance.screenToFlowPosition({ x: e.clientX - bounds.left, y: e.clientY - bounds.top });
-    addNode(type, pos);
+    addNode(type, role, pos);
   }
 
   return (
@@ -1041,106 +768,54 @@ export default function TikTokCanvasInner() {
         .react-flow__controls-button svg { fill: #9090a8 !important; }
         .react-flow__edge-path { stroke-width: 2 !important; }
         .react-flow__edge:hover .react-flow__edge-path { stroke: #a99cf8 !important; stroke-width: 3 !important; cursor: pointer; }
-        .react-flow__handle { transition: transform 0.15s, box-shadow 0.15s; }
         .react-flow__handle:hover { transform: scale(1.6) !important; box-shadow: 0 0 0 4px rgba(124,109,245,0.3); }
         .react-flow__handle-right { right: -8px !important; }
         .react-flow__handle-left { left: -8px !important; }
-        .react-flow__handle::after { content: ''; position: absolute; inset: -8px; border-radius: 50%; }
         .react-flow__pane::-webkit-scrollbar { display: none; }
       `}</style>
 
-      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 z-50"
-        style={{ background: "rgba(11,11,17,0.99)", borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+      {/* Topbar */}
+      <div className="flex items-center justify-between px-4 py-3 flex-shrink-0 z-40" style={{ background: "rgba(11,11,17,0.99)", borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
         <div className="flex items-center gap-3">
-          <a href="/dashboard"
-            className="w-7 h-7 rounded-lg flex items-center justify-center no-underline transition-all hover:opacity-80"
-            style={{ background: "rgba(255,255,255,0.08)", border: "0.5px solid rgba(255,255,255,0.1)" }}
-            title="Voltar ao Dashboard">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M19 12H5M12 5l-7 7 7 7"/>
-            </svg>
+          <a href="/dashboard" className="w-7 h-7 rounded-lg flex items-center justify-center no-underline" style={{ background: "rgba(255,255,255,0.08)", border: "0.5px solid rgba(255,255,255,0.1)" }} title="Voltar">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
           </a>
-          <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
-            </svg>
-          </div>
-          <div>
-            <p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p>
-            <p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram · YouTube Shorts</p>
-          </div>
+          <div><p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p><p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram</p></div>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg"
-            style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <button onClick={() => setShowLibrary(v => !v)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+            📁 Biblioteca
+          </button>
+          <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
             <span className="font-semibold text-[#f0f0f5]">{userCredits.toLocaleString()}</span> créditos
           </div>
-          <button type="button"
-            className="flex items-center gap-2 px-4 py-2 rounded-[8px] text-sm font-semibold cursor-pointer border-none transition-all hover:opacity-90"
-            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}
-            onClick={handleGerarTodos}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M13 10V3L4 14h7v7l9-11h-7z"/>
-            </svg>
-            Gerar todos
+          <button type="button" onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 rounded-[8px] text-sm font-semibold cursor-pointer border-none"
+            style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff", boxShadow: "0 4px 14px rgba(124,109,245,0.4)" }}>
+            + Adicionar
           </button>
         </div>
       </div>
 
       {creditModal && (
-        <div className="absolute inset-0 flex items-center justify-center z-50"
-          style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
-          <div className="rounded-2xl p-7 max-w-sm w-full mx-4"
-            style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }}>
-            <div className="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4"
-              style={{ background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.25)" }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-            </div>
+        <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }}>
             <h3 className="text-[17px] font-bold text-[#f0f0f5] text-center mb-2">Créditos insuficientes</h3>
             <p className="text-[13px] text-[#9090a8] text-center leading-relaxed mb-5">
-              Seus vídeos precisam de <strong className="text-[#f87171]">{creditModal.needed} créditos</strong> mas você tem apenas <strong className="text-[#f0f0f5]">{creditModal.have} créditos</strong> disponíveis.
+              Precisa de <strong className="text-[#f87171]">{creditModal.needed} créditos</strong>, você tem <strong className="text-[#f0f0f5]">{creditModal.have}</strong>.
             </p>
-            <div className="rounded-[10px] p-4 mb-5" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-              <div className="flex justify-between text-[12px] mb-2">
-                <span className="text-[#55556a]">Necessário</span>
-                <span className="text-[#f87171] font-semibold">{creditModal.needed} créditos</span>
-              </div>
-              <div className="flex justify-between text-[12px] mb-2">
-                <span className="text-[#55556a]">Disponível</span>
-                <span className="text-[#f0f0f5] font-semibold">{creditModal.have} créditos</span>
-              </div>
-              <div className="h-px my-2" style={{ background: "rgba(255,255,255,0.07)" }} />
-              <div className="flex justify-between text-[12px]">
-                <span className="text-[#55556a]">Faltam</span>
-                <span className="text-[#f87171] font-bold">{creditModal.needed - creditModal.have} créditos</span>
-              </div>
-            </div>
             <div className="flex flex-col gap-2">
-              <a href="/dashboard/settings"
-                className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 no-underline"
-                style={{ background: "#7c6df5", color: "#fff" }}>
-                ⚡ Ver planos e adicionar créditos
-              </a>
-              <button type="button" onClick={() => setCreditModal(null)}
-                className="w-full h-10 rounded-[10px] text-sm cursor-pointer border-none"
-                style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
-                Cancelar
-              </button>
+              <a href="/dashboard/settings" className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 no-underline" style={{ background: "#7c6df5", color: "#fff" }}>⚡ Ver planos</a>
+              <button type="button" onClick={() => setCreditModal(null)} className="w-full h-10 rounded-[10px] text-sm cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Cancelar</button>
             </div>
           </div>
         </div>
       )}
 
-      <div className="flex-1 relative overflow-hidden" ref={reactFlowWrapper}
-        style={{ height: "calc(100vh - 112px)" }}
-        onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
+      {showAddModal && <AddComponentModal onAdd={(type, role) => addNode(type, role)} onClose={() => setShowAddModal(false)} />}
 
-        <BlockSidebar onAdd={addNode} />
-
-        <div style={{ marginLeft: "64px", marginRight: selectedNode ? "320px" : "0", height: "100%" }}>
+      <div className="flex-1 relative overflow-hidden" ref={reactFlowWrapper} style={{ height: "calc(100vh - 112px)" }} onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
+        <div style={{ marginRight: (selectedNode || showLibrary) ? "288px" : "0", height: "100%" }}>
           <ReactFlow
             nodes={nodesWithConfig}
             edges={edges}
@@ -1162,21 +837,35 @@ export default function TikTokCanvasInner() {
             <Background variant={BackgroundVariant.Dots} gap={16} size={1} color="#c8c8d0" style={{ background: "#f5f5f7" }} />
             <Controls style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} />
             <MiniMap style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.1)", borderRadius: "10px" }} nodeColor={() => "#7c6df5"} />
+
+            {nodes.length === 0 && (
+              <Panel position="top-center" style={{ marginTop: "160px" }}>
+                <div className="rounded-2xl px-8 py-10 flex flex-col items-center gap-3" style={{ background: "rgba(14,14,20,0.98)", border: "0.5px solid rgba(255,255,255,0.1)", width: "320px" }}>
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-2xl" style={{ background: "rgba(124,109,245,0.12)" }}>🗂️</div>
+                  <p className="text-base font-bold text-[#f0f0f5]">Seu workflow está vazio</p>
+                  <p className="text-xs text-[#55556a] text-center">Comece adicionando um componente ao seu workflow.</p>
+                  <button type="button" onClick={() => setShowAddModal(true)}
+                    className="mt-2 px-5 py-2.5 rounded-[8px] text-sm font-semibold cursor-pointer border-none"
+                    style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+                    + Adicionar Componente
+                  </button>
+                </div>
+              </Panel>
+            )}
+
             <Panel position="top-right" style={{ marginRight: "12px", marginTop: "12px" }}>
-              <div className="text-[10px] text-[#55556a] px-3 py-2 rounded-lg"
-                style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <div className="text-[10px] text-[#55556a] px-3 py-2 rounded-lg" style={{ background: "rgba(14,14,20,0.95)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
                 {nodes.length} bloco{nodes.length !== 1 ? "s" : ""} · {edges.length} conexõe{edges.length !== 1 ? "s" : ""}
               </div>
             </Panel>
           </ReactFlow>
         </div>
 
-        {selectedNode && (
-          <ConfigPanel
-            node={selectedNode as Node<BlockData>}
-            onUpdate={updateNodeData}
-            onClose={() => setSelectedNodeId(null)}
-          />
+        {selectedNode && !showLibrary && (
+          <ConfigPanel node={selectedNode as Node<BlockData>} onUpdate={updateNodeData} onClose={() => setSelectedNodeId(null)} />
+        )}
+        {showLibrary && (
+          <MediaLibrary nodes={nodes as Node<BlockData>[]} onClose={() => setShowLibrary(false)} />
         )}
       </div>
     </div>
