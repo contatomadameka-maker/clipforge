@@ -205,10 +205,33 @@ function GeradorNode({ data, selected }: NodeProps) {
   );
 }
 
+// ── Download forçado via blob (contorna restrição cross-origin) ─
+async function downloadVideoBlob(url: string, filename: string, onStart?: () => void, onEnd?: () => void) {
+  onStart?.();
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Fallback: se o fetch falhar (ex: CORS bloqueado na origem), abre em nova aba
+    window.open(url, "_blank");
+  } finally {
+    onEnd?.();
+  }
+}
+
 // ── Nó: Resultado ────────────────────────────────────────────────
 
 function ResultadoNode({ data }: NodeProps) {
   const d = data as BlockData;
+  const [downloading, setDownloading] = useState(false);
   return (
     <>
       <Handle type="target" position={Position.Left} style={handleStyle} />
@@ -245,11 +268,12 @@ function ResultadoNode({ data }: NodeProps) {
           {d.status === "done" && d.videoUrl && (
             <div className="flex flex-col gap-2">
               <video src={d.videoUrl} className="w-full rounded-lg" style={{ maxHeight: "160px" }} controls muted />
-              <a href={d.videoUrl} target="_blank" rel="noopener noreferrer" download
-                className="flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[10px] font-medium no-underline"
+              <button type="button" disabled={downloading}
+                onClick={() => downloadVideoBlob(d.videoUrl as string, `video-${Date.now()}.mp4`, () => setDownloading(true), () => setDownloading(false))}
+                className="flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[10px] font-medium border-none cursor-pointer disabled:opacity-50"
                 style={{ background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
-                ⬇️ Baixar vídeo
-              </a>
+                {downloading ? "⏳ Baixando..." : "⬇️ Baixar vídeo"}
+              </button>
             </div>
           )}
           {d.status === "error" && (
