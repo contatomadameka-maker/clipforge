@@ -128,7 +128,7 @@ async def generate_seedance(req: GenerateSeedanceRequest):
         "input": {
             "prompt": prompt,
             "reference_images": reference_images,
-            "duration": req.duration,
+            "duration": int(req.duration),
             "resolution": req.resolution,
             "aspect_ratio": req.aspect_ratio,
             "generate_audio": True,
