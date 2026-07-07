@@ -62,7 +62,7 @@ function GalleryPickerModal({ onSelect, onUploadNew, onClose }: { onSelect: (url
 
 const API = "https://clipforge-6yzz.onrender.com";
 
-const CREDIT_COST: Record<string, number> = { "5": 30, "10": 60, "15": 90 };
+const CREDIT_COST: Record<string, number> = { "5": 45, "10": 90, "15": 135 };
 const RESOLUTION_SURCHARGE: Record<string, number> = { "480p": 0, "720p": 20, "1080p": 35 };
 function computeCost(duration: string, resolution: string): number {
   return (CREDIT_COST[duration] || 60) + (RESOLUTION_SURCHARGE[resolution] ?? 0);
