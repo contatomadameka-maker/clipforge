@@ -73,7 +73,7 @@ const GERADOR_TIPOS: Record<string, { label: string; desc: string; credits: numb
   video_produto: { label: "Vídeo de Produto", desc: "Produto + persona (foto ou texto) + cena + fala, tudo em 1 geração", credits: 60 },
 };
 
-const CREDIT_COST: Record<string, number> = { "5": 30, "10": 60, "15": 90 };
+const CREDIT_COST: Record<string, number> = { "5": 45, "10": 90, "15": 135 };
 // 480p é o padrão (custo real ~R$4,16 pra 10s) — 720p/1080p custam mais na
 // Replicate (quase o dobro), então cobramos sobretaxa pra refletir isso.
 const RESOLUTION_SURCHARGE: Record<string, number> = { "480p": 0, "720p": 20, "1080p": 35 };
@@ -1047,7 +1047,7 @@ export default function TikTokCanvasInner() {
           <a href="/dashboard" className="w-7 h-7 rounded-lg flex items-center justify-center no-underline" style={{ background: "rgba(255,255,255,0.08)", border: "0.5px solid rgba(255,255,255,0.1)" }} title="Voltar">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#9090a8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
           </a>
-          <div><p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p><p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram</p></div>
+          <div><p className="text-sm font-bold text-[#f0f0f5]">Criativo de Produto</p><p className="text-[10px] text-[#55556a]">TikTok Shop · Facebook Ads · Kwai · Instagram · <a href="/tiktok/criar" className="text-[#a99cf8] no-underline">Prefere o modo guiado?</a></p></div>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
