@@ -2,7 +2,7 @@
 
 // ─────────────────────────────────────────────────────────────
 // frontend/app/(dashboard)/page.tsx
-// Home do usuário — acesso aos dois produtos + vídeos recentes
+// Home do usuário — acesso aos produtos + vídeos recentes
 // ─────────────────────────────────────────────────────────────
 
 import Link from "next/link";
@@ -167,7 +167,7 @@ export default function DashboardPage() {
         <p className="text-[11px] font-semibold uppercase tracking-widest text-text-3 mb-3">
           Criar novo vídeo
         </p>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
 
           {/* Studio card */}
           <Link
@@ -235,7 +235,7 @@ export default function DashboardPage() {
                   Vídeo com avatar falante
                 </h2>
                 <p className="text-[12px] text-text-2 leading-relaxed">
-                  Foto do produto → avatar → script → vídeo pronto. Para TikTok, Facebook Ads, Kwai e mais.
+                  Foto do produto → avatar → script → vídeo pronto. Para TikTok, Kwai, Reels e TikTok Shop.
                 </p>
               </div>
             </div>
@@ -250,7 +250,7 @@ export default function DashboardPage() {
               ))}
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-3">até 60s · 8–25 créditos</span>
+              <span className="text-[11px] text-text-3">5 a 15s · 60–270 créditos</span>
               <button className="flex items-center gap-1.5 bg-green text-[#0c1a13] text-[12px] font-medium px-4 py-2 rounded-[6px] hover:opacity-90 transition-opacity">
                 <svg className="w-3.5 h-3.5 stroke-current fill-none stroke-2" viewBox="0 0 24 24" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
@@ -259,6 +259,55 @@ export default function DashboardPage() {
               </button>
             </div>
           </Link>
+
+          {/* Instagram Dark card — em breve */}
+          <div
+            className="group relative bg-surface rounded-[14px] p-6 flex flex-col gap-4 overflow-hidden opacity-90"
+            style={{ border: "1px solid rgba(245,158,11,0.25)" }}
+          >
+            <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: "#f59e0b" }} />
+            <span
+              className="absolute top-5 right-5 text-[10px] font-bold px-2.5 py-1 rounded-full"
+              style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}
+            >
+              Em breve
+            </span>
+            <div className="flex items-start gap-4">
+              <div className="w-11 h-11 rounded-[11px] flex items-center justify-center flex-shrink-0 text-xl"
+                style={{ background: "rgba(245,158,11,0.12)" }}>
+                🌙
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider mb-1" style={{ color: "#f59e0b" }}>
+                  Instagram Dark
+                </p>
+                <h2 className="font-tight text-[17px] font-bold text-text tracking-tight mb-1">
+                  Reels com capa nova
+                </h2>
+                <p className="text-[12px] text-text-2 leading-relaxed">
+                  Cole o link de um perfil, escolha os Reels, crie uma capa nova — o sistema aplica em todos os vídeos baixados automaticamente.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {["Baixar Reels", "Capa nova", "Aplicar em lote"].map((s) => (
+                <span
+                  key={s}
+                  className="text-[11px] px-2.5 py-0.5 rounded-full border border-border bg-surface-2 text-text-3"
+                >
+                  {s}
+                </span>
+              ))}
+            </div>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-text-3">Em desenvolvimento</span>
+              <button disabled
+                className="flex items-center gap-1.5 text-[12px] font-medium px-4 py-2 rounded-[6px] cursor-not-allowed"
+                style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}>
+                Avise-me
+              </button>
+            </div>
+          </div>
 
         </div>
       </div>
