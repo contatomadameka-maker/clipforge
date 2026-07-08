@@ -12,7 +12,7 @@
 #   adiciona capa e marca d'água por cima do conteúdo baixado
 # ─────────────────────────────────────────────────────────────
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional
 from config import get_settings
@@ -101,33 +101,34 @@ class ProcessResponse(BaseModel):
 
 
 @router.post("/process", response_model=ProcessResponse)
-async def process_reels(req: ProcessRequest):
-    """Enfileira o processamento em lote (download + capa + marca d'água).
-    Roda em Celery porque envolve baixar vários vídeos e processar com
-    FFmpeg — pode demorar minutos dependendo da quantidade selecionada."""
-    from tasks.instagram_dark_tasks import process_reels_batch
+async def process_reels(req: ProcessRequest, background_tasks: BackgroundTasks):
+    """Roda o processamento em lote (download + capa + marca d'água) em
+    segundo plano, dentro do próprio serviço web — sem precisar de um
+    worker Celery separado (economiza o custo de um serviço a mais no
+    Render, viável pra uma ferramenta de uso ocasional como essa)."""
+    from tasks.instagram_dark_tasks import run_batch_job, TASKS
+    import uuid as _uuid
 
-    task = process_reels_batch.delay(
+    task_id = _uuid.uuid4().hex
+    TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
+
+    background_tasks.add_task(
+        run_batch_job,
+        task_id=task_id,
         user_id=req.user_id,
         video_urls=req.video_urls,
         cover_image_url=req.cover_image_url,
         watermark_image_url=req.watermark_image_url,
     )
-    return ProcessResponse(task_id=task.id)
+    return ProcessResponse(task_id=task_id)
 
 
 @router.get("/status/{task_id}")
 async def get_status(task_id: str):
     """Consulta o progresso do processamento em lote."""
-    from tasks.instagram_dark_tasks import celery_app
+    from tasks.instagram_dark_tasks import TASKS
 
-    result = celery_app.AsyncResult(task_id)
-    if result.state == "PENDING":
+    task = TASKS.get(task_id)
+    if not task:
         return {"status": "processing", "progress": 0}
-    if result.state == "PROGRESS":
-        return {"status": "processing", "progress": result.info.get("progress", 0)}
-    if result.state == "SUCCESS":
-        return {"status": "done", "videos": result.result}
-    if result.state == "FAILURE":
-        return {"status": "error", "error": str(result.info)}
-    return {"status": "processing", "progress": 0}
+    return task
