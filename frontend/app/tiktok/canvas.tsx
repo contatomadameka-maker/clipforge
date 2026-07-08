@@ -511,9 +511,9 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
   ];
 
   const MOTION_TEMPLATES = [
-    { label: "🌬️ Vento suave", text: "movimento sutil de vento, cabelo e roupa balançando levemente, câmera parada" },
-    { label: "🎥 Zoom lento", text: "zoom lento e suave se aproximando do centro da imagem" },
-    { label: "☀️ Luz mudando", text: "iluminação mudando gradualmente, sensação de passagem de tempo" },
+    { label: "🌬️ Movimento sutil", text: "movimento sutil e natural nos elementos da imagem, câmera parada, sem adicionar objetos ou pessoas que não estão na imagem original" },
+    { label: "🎥 Zoom lento", text: "zoom lento e suave se aproximando do centro da imagem, sem alterar o conteúdo da cena" },
+    { label: "☀️ Luz mudando", text: "iluminação mudando gradualmente, sensação de passagem de tempo, câmera parada" },
   ];
 
   async function generateScript() {
