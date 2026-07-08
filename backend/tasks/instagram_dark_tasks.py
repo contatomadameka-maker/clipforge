@@ -1,11 +1,18 @@
 # ─────────────────────────────────────────────────────────────
 # backend/tasks/instagram_dark_tasks.py
-# Processamento em lote: baixa os reels selecionados, prende uma
-# "capa" (intro) no começo de cada um, aplica marca d'água por cima,
-# e sobe o resultado final pro R2.
+# Processamento em lote — baixa os reels, prende a capa, aplica
+# marca d'água, sobe pro R2.
 #
-# Requer FFmpeg instalado no ambiente do Render (via apt/buildpack —
-# não é um pacote Python, precisa confirmar que existe no servidor).
+# SEM CELERY DE PROPÓSITO: roda via BackgroundTasks do próprio
+# FastAPI, dentro do mesmo serviço web já existente — evita precisar
+# de um worker novo (que custaria mais $7/mês no Render) pra uma
+# ferramenta de uso ocasional como essa.
+#
+# Limitação aceita: o progresso fica em memória (dict global). Se o
+# serviço reiniciar no meio de um processamento, essa tarefa se perde.
+# Pra escala maior no futuro, migrar pra Celery valeria a pena.
+#
+# Requer FFmpeg instalado no ambiente do Render.
 # ─────────────────────────────────────────────────────────────
 
 import os
@@ -14,34 +21,13 @@ import tempfile
 import uuid
 import boto3
 import httpx
-from celery import Celery
 
 from config import get_settings
 
 settings = get_settings()
 
-
-def _redis_url_with_ssl(url: str) -> str:
-    """Garante que uma URL rediss:// tenha o parâmetro ssl_cert_reqs —
-    exigido pela versão do Celery em uso, senão ele quebra na hora de
-    conectar (erro visto: 'A rediss:// URL must have parameter
-    ssl_cert_reqs')."""
-    if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
-        sep = "&" if "?" in url else "?"
-        return f"{url}{sep}ssl_cert_reqs=CERT_NONE"
-    return url
-
-
-_redis_url = _redis_url_with_ssl(settings.redis_url)
-
-# Instância própria do Celery pro Instagram Dark — separada da do
-# Studio de propósito, pra não depender/arriscar mexer na configuração
-# existente de lá.
-celery_app = Celery(
-    "instagram_dark",
-    broker=_redis_url,
-    backend=_redis_url,
-)
+# Guarda o progresso/resultado de cada tarefa em memória, por task_id
+TASKS: dict = {}
 
 
 def _r2_client():
@@ -78,7 +64,6 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
 
     _download(video_url, raw_path)
 
-    # Descobre resolução do vídeo original, pra capa casar com o tamanho certo
     probe = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0",
          "-show_entries", "stream=width,height", "-of", "csv=p=0", raw_path],
@@ -89,7 +74,6 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
     except Exception:
         width, height = "1080", "1920"
 
-    # 1) Cria um clipe de 2s a partir da imagem de capa, com áudio mudo
     subprocess.run([
         "ffmpeg", "-y",
         "-loop", "1", "-i", cover_path,
@@ -100,7 +84,6 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
         "-shortest", intro_path,
     ], check=True, capture_output=True)
 
-    # 2) Concatena a capa + o reel baixado
     subprocess.run([
         "ffmpeg", "-y",
         "-i", intro_path, "-i", raw_path,
@@ -110,7 +93,6 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
         concat_path,
     ], check=True, capture_output=True)
 
-    # 3) Aplica marca d'água (canto inferior direito) se foi fornecida
     if watermark_path:
         subprocess.run([
             "ffmpeg", "-y",
@@ -125,28 +107,33 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
     return final_path
 
 
-@celery_app.task(bind=True, name="instagram_dark.process_reels_batch")
-def process_reels_batch(self, user_id: str, video_urls: list, cover_image_url: str, watermark_image_url: str | None = None):
+def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url: str, watermark_image_url: str | None = None):
+    """Chamada pelo BackgroundTasks do FastAPI — roda de verdade o
+    processamento, atualizando TASKS[task_id] conforme avança."""
+    TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
     results = []
     total = len(video_urls)
 
-    with tempfile.TemporaryDirectory() as workdir:
-        cover_path = os.path.join(workdir, "cover.jpg")
-        _download(cover_image_url, cover_path)
+    try:
+        with tempfile.TemporaryDirectory() as workdir:
+            cover_path = os.path.join(workdir, "cover.jpg")
+            _download(cover_image_url, cover_path)
 
-        watermark_path = None
-        if watermark_image_url:
-            watermark_path = os.path.join(workdir, "watermark.png")
-            _download(watermark_image_url, watermark_path)
+            watermark_path = None
+            if watermark_image_url:
+                watermark_path = os.path.join(workdir, "watermark.png")
+                _download(watermark_image_url, watermark_path)
 
-        for i, video_url in enumerate(video_urls):
-            self.update_state(state="PROGRESS", meta={"progress": int((i / total) * 100)})
-            try:
-                final_local_path = _process_one_video(video_url, cover_path, watermark_path, workdir)
-                key = f"instagram-dark/{user_id}/{uuid.uuid4().hex}.mp4"
-                final_url = _upload_to_r2(final_local_path, key)
-                results.append({"original_url": video_url, "final_url": final_url, "status": "done"})
-            except Exception as e:
-                results.append({"original_url": video_url, "status": "error", "error": str(e)})
+            for i, video_url in enumerate(video_urls):
+                TASKS[task_id]["progress"] = int((i / total) * 100)
+                try:
+                    final_local_path = _process_one_video(video_url, cover_path, watermark_path, workdir)
+                    key = f"instagram-dark/{user_id}/{uuid.uuid4().hex}.mp4"
+                    final_url = _upload_to_r2(final_local_path, key)
+                    results.append({"original_url": video_url, "final_url": final_url, "status": "done"})
+                except Exception as e:
+                    results.append({"original_url": video_url, "status": "error", "error": str(e)})
 
-    return results
+        TASKS[task_id] = {"status": "done", "progress": 100, "videos": results}
+    except Exception as e:
+        TASKS[task_id] = {"status": "error", "progress": 0, "error": str(e)}
