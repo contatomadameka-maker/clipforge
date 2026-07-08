@@ -45,8 +45,16 @@ def _replicate_headers() -> dict:
 
 
 class GenerateSeedanceRequest(BaseModel):
-    # Foto do produto — obrigatória, é o que o avatar segura na cena
-    product_image_url: str
+    # ── Modo genérico (Criação Livre / Modo Cena / Animar Imagem) ──
+    # Se "prompt" vier preenchido, ele é usado DIRETO, ignorando toda
+    # a lógica de produto+persona+fala abaixo — é o caminho usado
+    # pelos tipos mais simples do Gerador.
+    prompt: Optional[str] = None
+    reference_images: Optional[List[str]] = None
+
+    # ── Modo "Vídeo de Produto" (legado, mantido por compatibilidade) ──
+    # Foto do produto — obrigatória nesse modo, é o que o avatar segura
+    product_image_url: Optional[str] = None
     # Foto da persona/avatar (retrato) — OPCIONAL. Se não vier, o
     # Seedance gera a pessoa inteira a partir da descrição em texto
     # abaixo (idade, cabelo, corpo, roupa) — testado e confirmado
@@ -58,13 +66,14 @@ class GenerateSeedanceRequest(BaseModel):
     persona_description: Optional[str] = None
     # Descrição da cena em linguagem natural (ex: "dentro de uma
     # academia lotada, câmera na altura do peito, iluminação quente")
-    scene_prompt: str
+    scene_prompt: Optional[str] = None
     # O que o avatar deve falar — vai automaticamente entre aspas no
     # prompt final, que é como o Seedance reconhece diálogo
-    dialogue: str
+    dialogue: Optional[str] = None
+
     aspect_ratio: str = "9:16"
     duration: str = "10"  # Seedance aceita 4–15s
-    resolution: str = "720p"
+    resolution: str = "480p"
 
 
 class SeedanceResponse(BaseModel):
@@ -112,17 +121,23 @@ async def generate_seedance(req: GenerateSeedanceRequest):
     (status='processing'). O frontend consulta /seedance/status/{task_id}
     em polling — mesmo padrão já usado em cenario.py e heygen.py."""
 
-    prompt = _build_prompt(req)
-
-    # Ordem das imagens de referência importa — precisa bater com a
-    # ordem citada no prompt ([Image1], [Image2], ...)
-    reference_images: List[str] = []
-    if req.persona_image_url:
-        reference_images = [req.persona_image_url, req.product_image_url]
+    if req.prompt:
+        # ── Modo genérico: Criação Livre, Modo Cena, Animar Imagem ──
+        # O frontend já manda o prompt pronto — não montamos nada aqui.
+        prompt = req.prompt
+        reference_images = req.reference_images or []
     else:
-        # Sem foto de persona — só o produto entra como referência de
-        # imagem; a pessoa é descrita inteiramente em texto no prompt
-        reference_images = [req.product_image_url]
+        # ── Modo "Vídeo de Produto" (legado) ──
+        if not req.product_image_url or not req.scene_prompt or not req.dialogue:
+            raise HTTPException(
+                status_code=422,
+                detail="Sem 'prompt' genérico, é preciso informar product_image_url, scene_prompt e dialogue (modo Vídeo de Produto)."
+            )
+        prompt = _build_prompt(req)
+        if req.persona_image_url:
+            reference_images = [req.persona_image_url, req.product_image_url]
+        else:
+            reference_images = [req.product_image_url]
 
     payload = {
         "input": {
