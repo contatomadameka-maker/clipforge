@@ -70,9 +70,20 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
         capture_output=True, text=True,
     )
     try:
-        width, height = probe.stdout.strip().split(",")
+        orig_width, orig_height = [int(x) for x in probe.stdout.strip().split(",")]
     except Exception:
-        width, height = "1080", "1920"
+        orig_width, orig_height = 1080, 1920
+
+    # Limita a resolução de processamento — reduz bastante o consumo de
+    # memória do FFmpeg, essencial num plano com pouca RAM. 720px de
+    # largura já fica ótimo pra Reels/Stories, não precisa da resolução
+    # nativa (que costuma ser 1080x1920 ou maior).
+    MAX_WIDTH = 720
+    if orig_width > MAX_WIDTH:
+        scale = MAX_WIDTH / orig_width
+        width, height = MAX_WIDTH, int(orig_height * scale) // 2 * 2  # precisa ser par
+    else:
+        width, height = orig_width, orig_height
 
     subprocess.run([
         "ffmpeg", "-y", "-threads", "1",
@@ -87,7 +98,9 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
     subprocess.run([
         "ffmpeg", "-y", "-threads", "1",
         "-i", intro_path, "-i", raw_path,
-        "-filter_complex", "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
+        "-filter_complex",
+        f"[1:v:0]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2[reelv];"
+        f"[0:v:0][0:a:0][reelv][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
         "-map", "[outv]", "-map", "[outa]",
         "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
         concat_path,
