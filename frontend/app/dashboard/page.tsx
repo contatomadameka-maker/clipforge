@@ -260,18 +260,13 @@ export default function DashboardPage() {
             </div>
           </Link>
 
-          {/* Instagram Dark card — em breve */}
-          <div
-            className="group relative bg-surface rounded-[14px] p-6 flex flex-col gap-4 overflow-hidden opacity-90"
+          {/* Instagram Dark card */}
+          <Link
+            href="/instagram-dark"
+            className="group relative bg-surface rounded-[14px] p-6 flex flex-col gap-4 overflow-hidden transition-all duration-150"
             style={{ border: "1px solid rgba(245,158,11,0.25)" }}
           >
             <div className="absolute top-0 left-0 right-0 h-[2px]" style={{ background: "#f59e0b" }} />
-            <span
-              className="absolute top-5 right-5 text-[10px] font-bold px-2.5 py-1 rounded-full"
-              style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}
-            >
-              Em breve
-            </span>
             <div className="flex items-start gap-4">
               <div className="w-11 h-11 rounded-[11px] flex items-center justify-center flex-shrink-0 text-xl"
                 style={{ background: "rgba(245,158,11,0.12)" }}>
@@ -300,14 +295,14 @@ export default function DashboardPage() {
               ))}
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-text-3">Em desenvolvimento</span>
-              <button disabled
-                className="flex items-center gap-1.5 text-[12px] font-medium px-4 py-2 rounded-[6px] cursor-not-allowed"
-                style={{ background: "rgba(245,158,11,0.12)", color: "#f59e0b" }}>
-                Avise-me
+              <span className="text-[11px] text-text-3">Beta — em teste</span>
+              <button
+                className="flex items-center gap-1.5 text-[12px] font-medium px-4 py-2 rounded-[6px] hover:opacity-90 transition-opacity"
+                style={{ background: "#f59e0b", color: "#1a1305" }}>
+                Abrir ferramenta
               </button>
             </div>
-          </div>
+          </Link>
 
         </div>
       </div>
