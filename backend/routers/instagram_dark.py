@@ -44,7 +44,7 @@ class ReelItem(BaseModel):
 
 @router.get("/list-reels", response_model=List[ReelItem])
 async def list_reels(profile: str, count: int = 12):
-    """Lista os Reels mais recentes/relevantes de um perfil público."""
+    """Lista os Reels mais recentes de um perfil público."""
     username = extract_username(profile)
 
     if not settings.hikerapi_key:
@@ -62,29 +62,28 @@ async def list_reels(profile: str, count: int = 12):
         user_data = user_res.json()
         user_id = user_data.get("pk") or user_data.get("id")
 
-        # 2) Busca os reels desse usuário
+        # 2) Busca os reels desse usuário — endpoint correto é /v1/user/clips,
+        # parâmetro de quantidade é "amount", e a resposta vem como uma lista
+        # direta (não embrulhada em {"items": [...]})
         reels_res = await client.get(
-            f"{HIKERAPI_BASE}/v2/user/clips",
-            params={"user_id": user_id, "count": count},
+            f"{HIKERAPI_BASE}/v1/user/clips",
+            params={"user_id": user_id, "amount": count},
             headers={"x-access-key": settings.hikerapi_key},
         )
         if reels_res.status_code != 200:
             raise HTTPException(status_code=502, detail="Erro ao buscar Reels desse perfil.")
 
-        items = reels_res.json().get("items", [])
+        items = reels_res.json()
         result = []
-        for item in items:
-            media = item.get("media", item)
-            video_versions = media.get("video_versions", [])
-            video_url = video_versions[0]["url"] if video_versions else ""
-            thumb_candidates = media.get("image_versions2", {}).get("candidates", [])
-            thumb_url = thumb_candidates[0]["url"] if thumb_candidates else ""
+        for media in items:
+            video_url = media.get("video_url", "")
+            thumb_url = media.get("thumbnail_url", "")
             if video_url:
                 result.append(ReelItem(
-                    media_id=str(media.get("id", "")),
+                    media_id=str(media.get("pk", "")),
                     video_url=video_url,
                     thumbnail_url=thumb_url,
-                    views=media.get("play_count", 0) or media.get("view_count", 0) or 0,
+                    views=media.get("play_count", 0) or 0,
                     duration_seconds=media.get("video_duration", 0) or 0,
                 ))
         return result
