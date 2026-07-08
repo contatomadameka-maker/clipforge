@@ -53,6 +53,8 @@ interface BlockData extends Record<string, unknown> {
   personaDescription?: string;
   scenePrompt?: string;
   dialogue?: string;
+  freePrompt?: string;
+  motionPrompt?: string;
   duration?: string; // "5" | "10" | "15"
   aspectRatio?: string;
   resolution?: string;
@@ -69,8 +71,11 @@ const ROLE_CONFIG: Record<MidiaRole, { color: string; icon: string; label: strin
   persona:  { color: "#3ecf8e", icon: "🧑‍🎤", label: "Persona" },
 };
 
-const GERADOR_TIPOS: Record<string, { label: string; desc: string; credits: number }> = {
-  video_produto: { label: "Vídeo de Produto", desc: "Produto + persona (foto ou texto) + cena + fala, tudo em 1 geração", credits: 60 },
+const GERADOR_TIPOS: Record<string, { label: string; desc: string; icon: string }> = {
+  video_produto:  { label: "Vídeo de Produto", desc: "Produto + persona (foto ou texto) + cena + fala, tudo em 1 geração", icon: "🛍️" },
+  criacao_livre:  { label: "Criação Livre de Vídeo", desc: "Prompt livre, com ou sem imagem de referência conectada", icon: "🎥" },
+  modo_cena:      { label: "Modo Cena", desc: "Cenário/ambiente em movimento, sem avatar, sem fala", icon: "🎬" },
+  animar_imagem:  { label: "Animar Imagem", desc: "Anima 1 imagem conectada com um movimento simples, sem diálogo", icon: "✨" },
 };
 
 // Créditos por segundo, por resolução — 720p custa 2,25x mais na
@@ -173,7 +178,7 @@ function GeradorNode({ data, selected }: NodeProps) {
         <div className="flex items-center gap-2.5 px-4 py-3" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
           <div className="w-8 h-8 rounded-lg flex items-center justify-center text-base flex-shrink-0"
             style={{ background: "rgba(124,109,245,0.15)", border: "0.5px solid rgba(124,109,245,0.4)" }}>
-            ✨
+            {tipo.icon}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-xs font-semibold text-[#a99cf8] leading-none mb-0.5">Gerador</p>
@@ -189,13 +194,32 @@ function GeradorNode({ data, selected }: NodeProps) {
           </button>
         </div>
         <div className="px-4 py-3 flex flex-col gap-2">
-          {d.scenePrompt ? (
-            <p className="text-[11px] text-[#9090a8] line-clamp-2">🎬 {d.scenePrompt}</p>
-          ) : (
-            <p className="text-[11px] text-[#55556a] italic">Duplo clique para configurar cena e fala</p>
+          {d.tipo === "criacao_livre" && (
+            d.freePrompt
+              ? <p className="text-[11px] text-[#9090a8] line-clamp-3">✍️ {d.freePrompt}</p>
+              : <p className="text-[11px] text-[#55556a] italic">Duplo clique para escrever o prompt</p>
           )}
-          {d.dialogue && (
-            <p className="text-[11px] text-[#9090a8] line-clamp-2">💬 "{d.dialogue}"</p>
+          {d.tipo === "modo_cena" && (
+            d.scenePrompt
+              ? <p className="text-[11px] text-[#9090a8] line-clamp-3">🎬 {d.scenePrompt}</p>
+              : <p className="text-[11px] text-[#55556a] italic">Duplo clique para descrever a cena</p>
+          )}
+          {d.tipo === "animar_imagem" && (
+            d.motionPrompt
+              ? <p className="text-[11px] text-[#9090a8] line-clamp-3">✨ {d.motionPrompt}</p>
+              : <p className="text-[11px] text-[#55556a] italic">Duplo clique para descrever o movimento</p>
+          )}
+          {(!d.tipo || d.tipo === "video_produto") && (
+            <>
+              {d.scenePrompt ? (
+                <p className="text-[11px] text-[#9090a8] line-clamp-2">🎬 {d.scenePrompt}</p>
+              ) : (
+                <p className="text-[11px] text-[#55556a] italic">Duplo clique para configurar cena e fala</p>
+              )}
+              {d.dialogue && (
+                <p className="text-[11px] text-[#9090a8] line-clamp-2">💬 "{d.dialogue}"</p>
+              )}
+            </>
           )}
           <div className="flex items-center gap-1.5 mt-1">
             <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#9090a8" }}>{dur}s</span>
@@ -469,8 +493,9 @@ function MidiaPanel({ node, update, onUpdate }: { node: Node<BlockData>; update:
 // ── Painel de configuração — Gerador ────────────────────────────
 
 function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Partial<BlockData>) => void }) {
-  const [promptMode, setPromptMode] = useState<"auto" | "avancado">("auto");
   const [generating, setGenerating] = useState(false);
+  const [showTipoPicker, setShowTipoPicker] = useState(false);
+  const tipo = node.data.tipo || "video_produto";
 
   const SCENE_TEMPLATES = [
     { label: "🏋️ Academia lotada", text: "dentro de uma academia lotada, câmera na altura do peito, iluminação quente" },
@@ -483,6 +508,12 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
     { label: "👩 Mulher, 30-40, fitness", text: "mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia" },
     { label: "👨 Homem, 25-35, casual", text: "homem com seus 28 anos, barba curta, estilo casual" },
     { label: "👩 Mulher, 20-30, aesthetic", text: "mulher com seus 24 anos, cabelo solto, estilo aesthetic" },
+  ];
+
+  const MOTION_TEMPLATES = [
+    { label: "🌬️ Vento suave", text: "movimento sutil de vento, cabelo e roupa balançando levemente, câmera parada" },
+    { label: "🎥 Zoom lento", text: "zoom lento e suave se aproximando do centro da imagem" },
+    { label: "☀️ Luz mudando", text: "iluminação mudando gradualmente, sensação de passagem de tempo" },
   ];
 
   async function generateScript() {
@@ -510,64 +541,143 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
     <div className="flex flex-col gap-4">
       <div>
         <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tipo</label>
-        <div className="rounded-[8px] px-3 py-2.5 flex items-center justify-between" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
-          <span className="text-sm text-[#f0f0f5]">Vídeo de Produto</span>
+        <button type="button" onClick={() => setShowTipoPicker(v => !v)}
+          className="w-full rounded-[8px] px-3 py-2.5 flex items-center justify-between cursor-pointer border-none"
+          style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+          <span className="text-sm text-[#f0f0f5] flex items-center gap-2">{GERADOR_TIPOS[tipo].icon} {GERADOR_TIPOS[tipo].label}</span>
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{computeCost(node.data.duration || "10", node.data.resolution || "480p")} cr</span>
-        </div>
-        <p className="text-[10px] text-[#55556a] mt-1">Conecte um bloco Mídia (Produto) ao Gerador. Persona é opcional — se não conectar foto, descreva em texto abaixo.</p>
+        </button>
+
+        {showTipoPicker && (
+          <div className="mt-1.5 rounded-[8px] overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
+            {Object.entries(GERADOR_TIPOS).map(([key, t]) => (
+              <button key={key} type="button"
+                onClick={() => { update({ tipo: key }); setShowTipoPicker(false); }}
+                className="w-full text-left px-3 py-2.5 cursor-pointer border-none flex flex-col gap-0.5"
+                style={tipo === key ? { background: "rgba(124,109,245,0.15)" } : { background: "rgba(255,255,255,0.03)" }}>
+                <span className="text-xs font-medium text-[#f0f0f5]">{t.icon} {t.label}</span>
+                <span className="text-[10px] text-[#55556a]">{t.desc}</span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <p className="text-[10px] text-[#55556a] mt-1">
+          {tipo === "video_produto" && "Conecte um bloco Mídia (Produto) ao Gerador. Persona é opcional — se não conectar foto, descreva em texto abaixo."}
+          {tipo === "criacao_livre" && "Conecte qualquer bloco Mídia como referência (opcional) e descreva livremente o que quer gerar."}
+          {tipo === "modo_cena" && "Não precisa de foto — descreva o ambiente/cenário. Vídeo mudo, sem avatar."}
+          {tipo === "animar_imagem" && "Conecte 1 bloco Mídia ao Gerador — é a imagem que vai ganhar movimento."}
+        </p>
       </div>
 
       <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
 
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Persona (se não conectou foto)</label>
-        <div className="grid grid-cols-1 gap-1.5 mb-2">
-          {PERSONA_TEMPLATES.map(t => (
-            <button key={t.label} type="button" onClick={() => update({ personaDescription: t.text })}
-              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
-              style={node.data.personaDescription === t.text ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <textarea value={node.data.personaDescription || ""} onChange={e => update({ personaDescription: e.target.value })}
-          placeholder="Ex: mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia"
-          rows={3}
-          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-      </div>
+      {/* ── Vídeo de Produto ── */}
+      {tipo === "video_produto" && (
+        <>
+          <div>
+            <label className="text-xs font-medium text-[#9090a8] block mb-2">Persona (se não conectou foto)</label>
+            <div className="grid grid-cols-1 gap-1.5 mb-2">
+              {PERSONA_TEMPLATES.map(t => (
+                <button key={t.label} type="button" onClick={() => update({ personaDescription: t.text })}
+                  className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+                  style={node.data.personaDescription === t.text ? { background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <textarea value={node.data.personaDescription || ""} onChange={e => update({ personaDescription: e.target.value })}
+              placeholder="Ex: mulher com seus 38 anos, cabelo amarrado, corpo atlético, roupa de academia"
+              rows={3}
+              className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+          </div>
 
-      <div>
-        <label className="text-xs font-medium text-[#9090a8] block mb-2">Cena</label>
-        <div className="grid grid-cols-1 gap-1.5 mb-2">
-          {SCENE_TEMPLATES.map(t => (
-            <button key={t.label} type="button" onClick={() => update({ scenePrompt: t.text })}
-              className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
-              style={node.data.scenePrompt === t.text ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <textarea value={node.data.scenePrompt || ""} onChange={e => update({ scenePrompt: e.target.value })}
-          placeholder="Descreva a cena..." rows={3}
-          className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-      </div>
+          <div>
+            <label className="text-xs font-medium text-[#9090a8] block mb-2">Cena</label>
+            <div className="grid grid-cols-1 gap-1.5 mb-2">
+              {SCENE_TEMPLATES.map(t => (
+                <button key={t.label} type="button" onClick={() => update({ scenePrompt: t.text })}
+                  className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+                  style={node.data.scenePrompt === t.text ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <textarea value={node.data.scenePrompt || ""} onChange={e => update({ scenePrompt: e.target.value })}
+              placeholder="Descreva a cena..." rows={3}
+              className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+          </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-1.5">
-          <label className="text-xs font-medium text-[#9090a8]">Fala do avatar</label>
-          <button type="button" onClick={generateScript} disabled={generating}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none disabled:opacity-40"
-            style={{ background: "rgba(248,113,113,0.1)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.2)" }}>
-            {generating ? "Gerando..." : "✨ Gerar com IA"}
-          </button>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-medium text-[#9090a8]">Fala do avatar</label>
+              <button type="button" onClick={generateScript} disabled={generating}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none disabled:opacity-40"
+                style={{ background: "rgba(248,113,113,0.1)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.2)" }}>
+                {generating ? "Gerando..." : "✨ Gerar com IA"}
+              </button>
+            </div>
+            <textarea value={node.data.dialogue || ""} onChange={e => update({ dialogue: e.target.value })}
+              placeholder='Ex: "Esse produto mudou minha vida, perdi 10kg em 30 dias..."' rows={4}
+              className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+          </div>
+        </>
+      )}
+
+      {/* ── Criação Livre ── */}
+      {tipo === "criacao_livre" && (
+        <div>
+          <label className="text-xs font-medium text-[#9090a8] block mb-2">Prompt</label>
+          <textarea value={node.data.freePrompt || ""} onChange={e => update({ freePrompt: e.target.value })}
+            placeholder="Descreva livremente o vídeo que quer gerar. Se conectou uma imagem, ela é usada como referência visual."
+            rows={8}
+            className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
+            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
         </div>
-        <textarea value={node.data.dialogue || ""} onChange={e => update({ dialogue: e.target.value })}
-          placeholder='Ex: "Esse produto mudou minha vida, perdi 10kg em 30 dias..."' rows={4}
-          className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
-          style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-      </div>
+      )}
+
+      {/* ── Modo Cena ── */}
+      {tipo === "modo_cena" && (
+        <div>
+          <label className="text-xs font-medium text-[#9090a8] block mb-2">Cena</label>
+          <div className="grid grid-cols-1 gap-1.5 mb-2">
+            {SCENE_TEMPLATES.map(t => (
+              <button key={t.label} type="button" onClick={() => update({ scenePrompt: t.text })}
+                className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+                style={node.data.scenePrompt === t.text ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <textarea value={node.data.scenePrompt || ""} onChange={e => update({ scenePrompt: e.target.value })}
+            placeholder="Descreva o ambiente/cenário..." rows={6}
+            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+        </div>
+      )}
+
+      {/* ── Animar Imagem ── */}
+      {tipo === "animar_imagem" && (
+        <div>
+          <label className="text-xs font-medium text-[#9090a8] block mb-2">Movimento</label>
+          <div className="grid grid-cols-1 gap-1.5 mb-2">
+            {MOTION_TEMPLATES.map(t => (
+              <button key={t.label} type="button" onClick={() => update({ motionPrompt: t.text })}
+                className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+                style={node.data.motionPrompt === t.text ? { background: "rgba(96,165,250,0.15)", color: "#60a5fa", border: "0.5px solid rgba(96,165,250,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <textarea value={node.data.motionPrompt || ""} onChange={e => update({ motionPrompt: e.target.value })}
+            placeholder="Descreva o movimento que a imagem deve ganhar..." rows={6}
+            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+        </div>
+      )}
 
       <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
 
@@ -711,7 +821,7 @@ function ConfirmGenerateModal({ cost, duration, resolution, haveCredits, onConfi
 
 // ── Modal "Adicionar Componente" ────────────────────────────────
 
-function AddComponentModal({ onAdd, onClose }: { onAdd: (type: BlockType, role?: MidiaRole) => void; onClose: () => void }) {
+function AddComponentModal({ onAdd, onClose }: { onAdd: (type: BlockType, role?: MidiaRole, geradorTipo?: string) => void; onClose: () => void }) {
   const [tab, setTab] = useState<"midia" | "gerador">("midia");
   return (
     <div className="absolute inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.6)", backdropFilter: "blur(4px)" }} onClick={onClose}>
@@ -744,10 +854,16 @@ function AddComponentModal({ onAdd, onClose }: { onAdd: (type: BlockType, role?:
             </>
           )}
           {tab === "gerador" && (
-            <button onClick={() => onAdd("gerador")} className="text-left px-4 py-3 rounded-[10px] cursor-pointer border-none flex items-center justify-between" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
-              <div><p className="text-sm font-medium text-[#f0f0f5]">✨ Vídeo de Produto</p><p className="text-[11px] text-[#55556a]">Produto + persona + cena + fala → vídeo com áudio nativo</p></div>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>60 cr</span>
-            </button>
+            <>
+              {Object.entries(GERADOR_TIPOS).map(([key, t]) => (
+                <button key={key} onClick={() => onAdd("gerador", undefined, key)}
+                  className="text-left px-4 py-3 rounded-[10px] cursor-pointer border-none flex items-center justify-between"
+                  style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                  <div><p className="text-sm font-medium text-[#f0f0f5]">{t.icon} {t.label}</p><p className="text-[11px] text-[#55556a]">{t.desc}</p></div>
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded flex-shrink-0" style={{ background: "rgba(245,158,11,0.15)", color: "#f59e0b" }}>{computeCost("10", "480p")} cr</span>
+                </button>
+              ))}
+            </>
           )}
         </div>
       </div>
@@ -831,12 +947,12 @@ export default function TikTokCanvasInner() {
     setShowAddModal(true);
   }, [rfInstance]);
 
-  function addNode(type: BlockType, role?: MidiaRole, position?: { x: number; y: number }) {
+  function addNode(type: BlockType, role?: MidiaRole, position?: { x: number; y: number }, geradorTipo?: string) {
     const id = nextId();
     const pos = position || { x: 300 + Math.random() * 200, y: 100 + Math.random() * 300 };
     const base: BlockData = { type, label: type };
     if (type === "midia") { base.role = role; }
-    if (type === "gerador") { base.tipo = "video_produto"; base.duration = "10"; base.aspectRatio = "9:16"; base.resolution = "480p"; }
+    if (type === "gerador") { base.tipo = geradorTipo || "video_produto"; base.duration = "10"; base.aspectRatio = "9:16"; base.resolution = "480p"; }
     setNodes(nds => [...nds, { id, type, position: pos, data: base }]);
     setSelectedNodeId(id);
     setShowAddModal(false);
@@ -851,29 +967,50 @@ export default function TikTokCanvasInner() {
     setNodes(nds => nds.map(n => n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
   }
 
+  function collectConnectedImages(geradorId: string): string[] {
+    const connectedEdges = edges.filter(e => e.target === geradorId);
+    const urls: string[] = [];
+    for (const edge of connectedEdges) {
+      const source = nodes.find(n => n.id === edge.source);
+      if (!source || source.data.type !== "midia") continue;
+      const url = (source.data.imageUrl as string) || "";
+      if (url) urls.push(url);
+    }
+    return urls;
+  }
+
   function handleGenerate(geradorId: string) {
     const geradorNode = nodes.find(n => n.id === geradorId);
     if (!geradorNode) return;
 
-    const connectedEdges = edges.filter(e => e.target === geradorId);
-    let productImageUrl = "";
-    let personaImageUrl = "";
-    for (const edge of connectedEdges) {
-      const source = nodes.find(n => n.id === edge.source);
-      if (!source || source.data.type !== "midia") continue;
-      if (source.data.role === "produto") productImageUrl = (source.data.imageUrl as string) || "";
-      if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
-    }
-
-    const personaDescription = (geradorNode.data.personaDescription as string) || "";
-    const dialogue = (geradorNode.data.dialogue as string) || "";
+    const tipo = (geradorNode.data.tipo as string) || "video_produto";
     const duration = (geradorNode.data.duration as string) || "10";
     const resolution = (geradorNode.data.resolution as string) || "480p";
     const cost = computeCost(duration, resolution);
 
-    if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
-    if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
-    if (!personaImageUrl && !personaDescription) { alert("Conecte uma foto de Persona OU descreva a persona em texto no Gerador!"); return; }
+    if (tipo === "video_produto") {
+      const connectedEdges = edges.filter(e => e.target === geradorId);
+      let productImageUrl = "";
+      let personaImageUrl = "";
+      for (const edge of connectedEdges) {
+        const source = nodes.find(n => n.id === edge.source);
+        if (!source || source.data.type !== "midia") continue;
+        if (source.data.role === "produto") productImageUrl = (source.data.imageUrl as string) || "";
+        if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
+      }
+      const personaDescription = (geradorNode.data.personaDescription as string) || "";
+      const dialogue = (geradorNode.data.dialogue as string) || "";
+      if (!productImageUrl) { alert("Conecte um bloco Mídia (Produto) ao Gerador!"); return; }
+      if (!dialogue) { alert("Preencha a fala do avatar no Gerador!"); return; }
+      if (!personaImageUrl && !personaDescription) { alert("Conecte uma foto de Persona OU descreva a persona em texto no Gerador!"); return; }
+    } else if (tipo === "criacao_livre") {
+      if (!geradorNode.data.freePrompt) { alert("Escreva o prompt no Gerador!"); return; }
+    } else if (tipo === "modo_cena") {
+      if (!geradorNode.data.scenePrompt) { alert("Descreva a cena no Gerador!"); return; }
+    } else if (tipo === "animar_imagem") {
+      if (collectConnectedImages(geradorId).length === 0) { alert("Conecte 1 bloco Mídia ao Gerador — é a imagem que vai animar!"); return; }
+      if (!geradorNode.data.motionPrompt) { alert("Descreva o movimento no Gerador!"); return; }
+    }
 
     if (cost > userCredits) { setCreditModal({ needed: cost, have: userCredits }); return; }
 
@@ -886,6 +1023,7 @@ export default function TikTokCanvasInner() {
     const geradorNode = nodes.find(n => n.id === geradorId);
     if (!geradorNode) return;
 
+    const tipo = (geradorNode.data.tipo as string) || "video_produto";
     const connectedEdges = edges.filter(e => e.target === geradorId);
     let productImageUrl = "";
     let productName = "";
@@ -899,11 +1037,13 @@ export default function TikTokCanvasInner() {
       }
       if (source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
     }
-
+    const connectedImages = collectConnectedImages(geradorId);
 
     const personaDescription = (geradorNode.data.personaDescription as string) || "";
     const scenePrompt = (geradorNode.data.scenePrompt as string) || "";
     const dialogue = (geradorNode.data.dialogue as string) || "";
+    const freePrompt = (geradorNode.data.freePrompt as string) || "";
+    const motionPrompt = (geradorNode.data.motionPrompt as string) || "";
     const duration = (geradorNode.data.duration as string) || "10";
     const resolution = (geradorNode.data.resolution as string) || "480p";
 
@@ -918,7 +1058,7 @@ export default function TikTokCanvasInner() {
         body: JSON.stringify({
           user_id: userId,
           amount: cost,
-          description: `Vídeo de Produto — ${duration}s ${resolution}`,
+          description: `${GERADOR_TIPOS[tipo].label} — ${duration}s ${resolution}`,
         }),
       });
       if (!debitRes.ok) {
@@ -956,20 +1096,51 @@ export default function TikTokCanvasInner() {
       } catch {}
     }
 
+    // Monta o payload de acordo com o tipo selecionado no Gerador
+    let seedanceBody: Record<string, any>;
+    if (tipo === "video_produto") {
+      seedanceBody = {
+        product_image_url: productImageUrl,
+        persona_image_url: personaImageUrl || null,
+        persona_description: personaDescription || null,
+        scene_prompt: scenePrompt || "fundo neutro, iluminação profissional",
+        dialogue,
+        aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+        duration,
+        resolution,
+      };
+    } else if (tipo === "criacao_livre") {
+      seedanceBody = {
+        prompt: freePrompt,
+        reference_images: connectedImages,
+        aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+        duration,
+        resolution,
+      };
+    } else if (tipo === "modo_cena") {
+      seedanceBody = {
+        prompt: `${scenePrompt}, câmera estática ou com leve movimento, sem pessoas, sem texto na tela.`,
+        reference_images: connectedImages,
+        aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+        duration,
+        resolution,
+      };
+    } else {
+      // animar_imagem
+      seedanceBody = {
+        prompt: `Anime a imagem [Image1] com o seguinte movimento: ${motionPrompt}`,
+        reference_images: connectedImages,
+        aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+        duration,
+        resolution,
+      };
+    }
+
     try {
       const res = await fetch(`${API}/seedance/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          product_image_url: productImageUrl,
-          persona_image_url: personaImageUrl || null,
-          persona_description: personaDescription || null,
-          scene_prompt: scenePrompt || "fundo neutro, iluminação profissional",
-          dialogue,
-          aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
-          duration,
-          resolution,
-        }),
+        body: JSON.stringify(seedanceBody),
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Erro ao iniciar geração"); }
       const data = await res.json();
@@ -996,7 +1167,7 @@ export default function TikTokCanvasInner() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 user_id: userId,
-                title: productName || "Vídeo de Produto",
+                title: productName || GERADOR_TIPOS[tipo].label,
                 type: "tiktok",
                 video_url: statusData.video_url,
                 duration_seconds: parseInt(duration),
@@ -1103,7 +1274,7 @@ export default function TikTokCanvasInner() {
         />
       )}
 
-      {showAddModal && <AddComponentModal onAdd={(type, role) => addNode(type, role, pendingConnection?.position)} onClose={() => { setShowAddModal(false); setPendingConnection(null); }} />}
+      {showAddModal && <AddComponentModal onAdd={(type, role, geradorTipo) => addNode(type, role, pendingConnection?.position, geradorTipo)} onClose={() => { setShowAddModal(false); setPendingConnection(null); }} />}
 
       <div className="flex-1 relative overflow-hidden" ref={reactFlowWrapper} style={{ height: "calc(100vh - 112px)" }} onDrop={handleDrop} onDragOver={e => e.preventDefault()}>
 
