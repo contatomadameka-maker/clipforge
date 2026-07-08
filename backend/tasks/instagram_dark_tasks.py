@@ -75,30 +75,30 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
         width, height = "1080", "1920"
 
     subprocess.run([
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-threads", "1",
         "-loop", "1", "-i", cover_path,
         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
         "-t", "2",
         "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps=30",
-        "-c:v", "libx264", "-c:a", "aac", "-pix_fmt", "yuv420p",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-pix_fmt", "yuv420p",
         "-shortest", intro_path,
     ], check=True, capture_output=True)
 
     subprocess.run([
-        "ffmpeg", "-y",
+        "ffmpeg", "-y", "-threads", "1",
         "-i", intro_path, "-i", raw_path,
         "-filter_complex", "[0:v:0][0:a:0][1:v:0][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
         "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-c:a", "aac",
+        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
         concat_path,
     ], check=True, capture_output=True)
 
     if watermark_path:
         subprocess.run([
-            "ffmpeg", "-y",
+            "ffmpeg", "-y", "-threads", "1",
             "-i", concat_path, "-i", watermark_path,
             "-filter_complex", "overlay=W-w-24:H-h-24",
-            "-c:a", "copy",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
             final_path,
         ], check=True, capture_output=True)
     else:
