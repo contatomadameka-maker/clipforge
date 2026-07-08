@@ -14,11 +14,34 @@ import tempfile
 import uuid
 import boto3
 import httpx
+from celery import Celery
 
-from tasks.studio_tasks import celery_app  # reaproveita a mesma instância Celery já configurada
 from config import get_settings
 
 settings = get_settings()
+
+
+def _redis_url_with_ssl(url: str) -> str:
+    """Garante que uma URL rediss:// tenha o parâmetro ssl_cert_reqs —
+    exigido pela versão do Celery em uso, senão ele quebra na hora de
+    conectar (erro visto: 'A rediss:// URL must have parameter
+    ssl_cert_reqs')."""
+    if url.startswith("rediss://") and "ssl_cert_reqs" not in url:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}ssl_cert_reqs=CERT_NONE"
+    return url
+
+
+_redis_url = _redis_url_with_ssl(settings.redis_url)
+
+# Instância própria do Celery pro Instagram Dark — separada da do
+# Studio de propósito, pra não depender/arriscar mexer na configuração
+# existente de lá.
+celery_app = Celery(
+    "instagram_dark",
+    broker=_redis_url,
+    backend=_redis_url,
+)
 
 
 def _r2_client():
