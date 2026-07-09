@@ -117,7 +117,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
         target_width, target_height = orig_width // 2 * 2, orig_height // 2 * 2
 
     base_path = raw_path
-    if bar_text or bar_color:
+    if bar_text:
         # Gera a faixa como PNG pronto (Pillow, quase instantâneo) — o
         # FFmpeg só precisa empilhar essa imagem já pronta com o vídeo,
         # sem precisar renderizar fonte frame a frame (era isso que
