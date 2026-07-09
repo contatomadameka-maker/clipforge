@@ -26,13 +26,14 @@ export default function InstagramDarkPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
-  const [coverUrl, setCoverUrl] = useState("");
+  const [barText, setBarText] = useState("");
+  const [barColor, setBarColor] = useState("#7c6df5");
+  const [textColor, setTextColor] = useState("#ffffff");
   const [watermarkUrl, setWatermarkUrl] = useState("");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState<{ original_url: string; final_url?: string; status: string }[]>([]);
 
-  const coverFileRef = useRef<HTMLInputElement>(null);
   const watermarkFileRef = useRef<HTMLInputElement>(null);
 
   async function uploadFile(file: File, onDone: (url: string) => void) {
@@ -98,7 +99,9 @@ export default function InstagramDarkPage() {
         body: JSON.stringify({
           user_id: userId,
           video_urls: selectedUrls,
-          cover_image_url: coverUrl || null,
+          bar_text: barText || null,
+          bar_color: barColor,
+          text_color: textColor,
           watermark_image_url: watermarkUrl || null,
         }),
       });
@@ -193,18 +196,40 @@ export default function InstagramDarkPage() {
           </div>
         )}
 
-        {/* Capa + marca d'água */}
+        {/* Faixa (molde) + marca d'água */}
         {reels.length > 0 && (
           <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Capa nova (opcional — em breve, outro formato)</label>
-              <div onClick={() => coverFileRef.current?.click()}
-                className="flex items-center gap-3 px-4 py-3 rounded-[8px] cursor-pointer"
-                style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
-                {coverUrl ? <img src={coverUrl} className="w-10 h-10 rounded object-cover" alt="" /> : <span>🖼️</span>}
-                <span className="text-xs text-[#9090a8]">{coverUrl ? "Capa enviada — clique pra trocar" : "Enviar imagem de capa"}</span>
+              <label className="text-xs font-medium text-[#9090a8] block mb-2">Faixa no topo (opcional — nome do canal ou tema)</label>
+              <input type="text" value={barText} onChange={e => setBarText(e.target.value)}
+                placeholder="Ex: Reflexões Diárias"
+                className="w-full h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a] mb-3"
+                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+              <div className="flex gap-4">
+                <div className="flex-1">
+                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor da faixa</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={barColor} onChange={e => setBarColor(e.target.value)}
+                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                    <span className="text-xs text-[#9090a8]">{barColor}</span>
+                  </div>
+                </div>
+                <div className="flex-1">
+                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor do texto</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={textColor} onChange={e => setTextColor(e.target.value)}
+                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                    <span className="text-xs text-[#9090a8]">{textColor}</span>
+                  </div>
+                </div>
               </div>
-              <input ref={coverFileRef} type="file" accept="image/*" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setCoverUrl); }} />
+              {barText && (
+                <div className="mt-3 h-12 rounded-[8px] flex items-center justify-center text-sm font-bold"
+                  style={{ background: barColor, color: textColor }}>
+                  {barText}
+                </div>
+              )}
+              <p className="text-[10px] text-[#55556a] mt-2">A faixa é adicionada acima do vídeo — o vídeo original não é cortado, a tela final fica um pouco mais alta.</p>
             </div>
 
             <div>
