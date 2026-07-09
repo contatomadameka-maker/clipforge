@@ -64,6 +64,10 @@ interface BlockData extends Record<string, unknown> {
   progress?: number;
   videoUrl?: string;
   errorMsg?: string;
+  // Rótulo amigável da etapa atual (ex: "Gerando vídeo...", "Dublando pra PT-BR...")
+  // — pipelines de 2 fases (Kling + HeyGen) mostram qual das duas está rodando,
+  // em vez de um "Gerando..." genérico que não dá pra saber se travou ou não.
+  stageLabel?: string;
 }
 
 const ROLE_CONFIG: Record<MidiaRole, { color: string; icon: string; label: string }> = {
@@ -292,7 +296,7 @@ function ResultadoNode({ data }: NodeProps) {
           {d.status === "processing" && (
             <div>
               <div className="flex justify-between mb-1.5">
-                <span className="text-[10px] text-[#9090a8]">Criando algo incrível...</span>
+                <span className="text-[10px] text-[#9090a8]">{d.stageLabel || "Criando algo incrível..."}</span>
                 <span className="text-[10px] text-[#60a5fa] font-medium">{d.progress || 0}%</span>
               </div>
               <div className="h-1.5 rounded-full overflow-hidden" style={{ background: "rgba(255,255,255,0.08)" }}>
@@ -303,6 +307,9 @@ function ResultadoNode({ data }: NodeProps) {
           {d.status === "done" && d.videoUrl && (
             <div className="flex flex-col gap-2">
               <video src={d.videoUrl} className="w-full rounded-lg" style={{ maxHeight: "160px" }} controls muted />
+              {d.errorMsg && (
+                <p className="text-[10px] text-[#f59e0b] leading-relaxed">⚠️ {d.errorMsg}</p>
+              )}
               <button type="button" disabled={downloading}
                 onClick={() => downloadVideoBlob(d.videoUrl as string, `video-${Date.now()}.mp4`, () => setDownloading(true), () => setDownloading(false))}
                 className="flex items-center justify-center gap-1.5 py-1.5 rounded-[6px] text-[10px] font-medium border-none cursor-pointer disabled:opacity-50"
@@ -1206,6 +1213,21 @@ export default function TikTokCanvasInner() {
     const statusUrlBase = tipo === "persona_fixa" ? `${API}/kling/status` : `${API}/seedance/status`;
     const bodyToSend = tipo === "persona_fixa" ? klingBody : seedanceBody;
 
+    // Pipeline de 2 fases (persona_fixa: Kling → dublagem HeyGen) demora bem
+    // mais que uma geração de 1 fase só. O modo "precision" do HeyGen Video
+    // Translation, em especial, é explicitamente mais lento (a doc recomenda
+    // polling a cada 30-60s pra vídeos mais longos). Por isso persona_fixa
+    // recebe um timeout bem mais generoso do que os outros tipos, que
+    // continuam com o valor original.
+    const isTwoStagePipeline = tipo === "persona_fixa";
+    const pollIntervalMs = isTwoStagePipeline ? 8000 : 5000;
+    const maxAttempts = isTwoStagePipeline ? 150 : 60; // 150×8s ≈ 20min | 60×5s = 5min
+
+    const STAGE_LABELS: Record<string, string> = {
+      gerando_video: "Gerando vídeo (Kling)...",
+      dublando_pt_br: "Dublando pra PT-BR (HeyGen)...",
+    };
+
     try {
       const res = await fetch(generateUrl, {
         method: "POST",
@@ -1219,17 +1241,27 @@ export default function TikTokCanvasInner() {
       updateNodeData(resultId, { progress: 25 });
 
       let attempts = 0;
-      const maxAttempts = 60;
       const poll = setInterval(async () => {
         attempts++;
         try {
           const statusRes = await fetch(`${statusUrlBase}/${taskId}`);
           const statusData = await statusRes.json();
-          updateNodeData(resultId, { progress: Math.min(25 + attempts * 3, 95) });
+          updateNodeData(resultId, {
+            progress: Math.min(25 + attempts * (70 / maxAttempts), 95),
+            stageLabel: statusData.stage ? STAGE_LABELS[statusData.stage] || statusData.stage : undefined,
+          });
 
           if (statusData.status === "done") {
             clearInterval(poll);
-            updateNodeData(resultId, { status: "done", progress: 100, videoUrl: statusData.video_url });
+            updateNodeData(resultId, {
+              status: "done",
+              progress: 100,
+              videoUrl: statusData.video_url,
+              // Se o backend devolveu um "warning" (ex: dublagem falhou mas o
+              // vídeo original ainda está disponível), mostra pro usuário em
+              // vez de esconder — assim ele sabe que recebeu o fallback.
+              errorMsg: statusData.warning || undefined,
+            });
             // Grava no histórico real (Meus vídeos) — silencioso, não
             // bloqueia a UI se falhar, o vídeo já está pronto de qualquer forma
             fetch(`${API}/videos/save`, {
@@ -1253,7 +1285,7 @@ export default function TikTokCanvasInner() {
             await refund(statusData.error || "timeout na geração");
           }
         } catch { clearInterval(poll); }
-      }, 5000);
+      }, pollIntervalMs);
     } catch (e: any) {
       updateNodeData(resultId, { status: "error", errorMsg: e.message });
       // 2) ESTORNO — falha ao sequer iniciar a geração
