@@ -43,8 +43,10 @@ class ReelItem(BaseModel):
 
 
 @router.get("/list-reels", response_model=List[ReelItem])
-async def list_reels(profile: str, count: int = 12):
-    """Lista os Reels mais recentes de um perfil público."""
+async def list_reels(profile: str, count: int = 24):
+    """Lista os Reels mais recentes de um perfil público. count tem teto de
+    100 por chamada (evita custo alto de uma vez só na HikerAPI)."""
+    count = min(count, 100)
     username = extract_username(profile)
 
     if not settings.hikerapi_key:
@@ -92,7 +94,7 @@ async def list_reels(profile: str, count: int = 12):
 class ProcessRequest(BaseModel):
     user_id: str
     video_urls: List[str]
-    cover_image_url: str
+    cover_image_url: Optional[str] = None
     watermark_image_url: Optional[str] = None
 
 
