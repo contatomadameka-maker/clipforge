@@ -77,9 +77,23 @@ async def list_reels(profile: str, count: int = 24):
 
         items = reels_res.json()
         result = []
+        skipped = 0
         for media in items:
+            # video_url costuma vir direto, mas alguns itens só têm o dado
+            # dentro de video_versions (lista) — tenta os dois caminhos
+            # antes de descartar o item.
             video_url = media.get("video_url", "")
+            if not video_url:
+                video_versions = media.get("video_versions") or []
+                if video_versions:
+                    video_url = video_versions[0].get("url", "")
+
             thumb_url = media.get("thumbnail_url", "")
+            if not thumb_url:
+                image_versions = media.get("image_versions2", {}).get("candidates") or []
+                if image_versions:
+                    thumb_url = image_versions[0].get("url", "")
+
             if video_url:
                 result.append(ReelItem(
                     media_id=str(media.get("pk", "")),
@@ -88,6 +102,10 @@ async def list_reels(profile: str, count: int = 24):
                     views=media.get("play_count", 0) or 0,
                     duration_seconds=media.get("video_duration", 0) or 0,
                 ))
+            else:
+                skipped += 1
+
+        print(f"[instagram-dark] {len(items)} itens recebidos, {len(result)} com vídeo válido, {skipped} descartados")
         return result
 
 
