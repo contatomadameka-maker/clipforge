@@ -44,16 +44,17 @@ class ReelItem(BaseModel):
 
 class ListReelsResponse(BaseModel):
     reels: List[ReelItem]
-    next_max_id: Optional[str] = None
+    next_page_id: Optional[str] = None
 
 
 @router.get("/list-reels", response_model=ListReelsResponse)
-async def list_reels(profile: str, max_id: Optional[str] = None):
-    """Lista uma página de Reels de um perfil público. Pra pegar a próxima
-    página, chama de novo passando o next_max_id que veio na resposta
-    anterior — a HikerAPI pagina por cursor (max_id), não por quantidade
-    pedida de uma vez (confirmado: amount não controla o tamanho real da
-    página nesse endpoint, sempre volta ~12 por chamada)."""
+async def list_reels(profile: str, page_id: Optional[str] = None):
+    """Lista uma página de Reels de um perfil público, via /v2/user/clips.
+    Pra pegar a próxima página, chama de novo passando o next_page_id que
+    veio na resposta anterior — confirmado testando direto na HikerAPI:
+    o cursor de paginação de verdade é um token opaco em base64 (campo
+    next_page_id), não o pk nem o id do último item (tentativas
+    anteriores que não funcionaram)."""
     username = extract_username(profile)
 
     if not settings.hikerapi_key:
@@ -71,24 +72,28 @@ async def list_reels(profile: str, max_id: Optional[str] = None):
         user_data = user_res.json()
         user_id = user_data.get("pk") or user_data.get("id")
 
-        # 2) Busca uma página de reels — passa max_id só se veio (primeira
-        # página não tem cursor ainda)
+        # 2) Busca uma página de reels — v2/user/clips, com page_id só se
+        # veio (primeira página não tem cursor ainda)
         params = {"user_id": user_id}
-        if max_id:
-            params["max_id"] = max_id
+        if page_id:
+            params["page_id"] = page_id
 
         reels_res = await client.get(
-            f"{HIKERAPI_BASE}/v1/user/clips",
+            f"{HIKERAPI_BASE}/v2/user/clips",
             params=params,
             headers={"x-access-key": settings.hikerapi_key},
         )
         if reels_res.status_code != 200:
             raise HTTPException(status_code=502, detail="Erro ao buscar Reels desse perfil.")
 
-        items = reels_res.json()
+        data = reels_res.json()
+        # No v2, os itens vêm aninhados: response.items[].media
+        items = data.get("response", {}).get("items", [])
+        next_page_id = data.get("next_page_id")
+
         result = []
-        last_raw_id = None
-        for media in items:
+        for item in items:
+            media = item.get("media", item)
             video_url = media.get("video_url", "")
             if not video_url:
                 video_versions = media.get("video_versions") or []
@@ -109,16 +114,9 @@ async def list_reels(profile: str, max_id: Optional[str] = None):
                     views=media.get("play_count", 0) or 0,
                     duration_seconds=media.get("video_duration", 0) or 0,
                 ))
-                # Guarda o "id" composto (formato "pk_userid") do último
-                # item — é esse formato que serve de cursor de paginação
-                # nesse tipo de API, não o "pk" sozinho (tentativa anterior
-                # que estava fazendo a página repetir sempre os mesmos 12).
-                last_raw_id = media.get("id") or media.get("pk")
 
-        next_max_id = str(last_raw_id) if last_raw_id else None
-
-        print(f"[instagram-dark] página com {len(result)} reels, next_max_id={next_max_id}")
-        return ListReelsResponse(reels=result, next_max_id=next_max_id)
+        print(f"[instagram-dark] página com {len(result)} reels, next_page_id={'sim' if next_page_id else 'não'}")
+        return ListReelsResponse(reels=result, next_page_id=next_page_id)
 
 
 class ProcessRequest(BaseModel):
