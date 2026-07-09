@@ -3,6 +3,8 @@
 // frontend/app/instagram-dark/page.tsx
 // Instagram Dark — busca Reels (por perfil ou link direto), aplica
 // capa/faixa + marca d'água em lote, cobra por Reels processado com sucesso.
+// NOVO: aba "Editor em Massa" — enquadramento 1080x1920 (zoom/posição/
+// bordas) aplicado em lote, sobre Reels já buscados OU upload novo.
 
 import { useState, useRef } from "react";
 import { getSupabase } from "@/lib/supabase";
@@ -18,8 +20,22 @@ interface ReelItem {
   duration_seconds: number;
 }
 
+interface BatchUpload {
+  id: string;
+  url: string;
+  name: string;
+  uploading: boolean;
+}
+
+interface BatchResult {
+  original_url: string;
+  final_url?: string;
+  status: "done" | "error";
+  error?: string;
+}
+
 export default function InstagramDarkPage() {
-  const [tab, setTab] = useState<"perfil" | "link">("perfil");
+  const [tab, setTab] = useState<"perfil" | "link" | "lote">("perfil");
 
   const [profileInput, setProfileInput] = useState("");
   const [linkInput, setLinkInput] = useState("");
@@ -42,6 +58,25 @@ export default function InstagramDarkPage() {
   const [userCredits, setUserCredits] = useState<number>(0);
 
   const watermarkFileRef = useRef<HTMLInputElement>(null);
+
+  // ── Editor em Massa — estado próprio, separado do fluxo de faixa/marca acima ──
+  const [batchSource, setBatchSource] = useState<"existing" | "upload">("existing");
+  const [batchSelectedReels, setBatchSelectedReels] = useState<Set<string>>(new Set());
+  const [batchUploads, setBatchUploads] = useState<BatchUpload[]>([]);
+  const batchFileRef = useRef<HTMLInputElement>(null);
+
+  const [zoom, setZoom] = useState(100);
+  const [posX, setPosX] = useState(50);
+  const [posY, setPosY] = useState(50);
+  const [borderColor, setBorderColor] = useState("#ffffff");
+  const [fillMode, setFillMode] = useState<"manual" | "automatico">("manual");
+  const [fillTop, setFillTop] = useState(12);
+  const [fillBottom, setFillBottom] = useState(12);
+
+  const [batchProcessing, setBatchProcessing] = useState(false);
+  const [batchProgress, setBatchProgress] = useState(0);
+  const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
+  const [batchError, setBatchError] = useState<string | null>(null);
 
   async function getUserId(): Promise<string> {
     const sb = getSupabase();
@@ -195,6 +230,111 @@ export default function InstagramDarkPage() {
     }
   }
 
+  // ── Editor em Massa — funções próprias ──────────────────────────────
+
+  function toggleBatchReel(id: string) {
+    setBatchSelectedReels(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleBatchFilesSelected(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const remaining = 50 - batchUploads.length;
+    const toUpload = Array.from(files).slice(0, Math.max(0, remaining));
+
+    for (const file of toUpload) {
+      const localId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      setBatchUploads(prev => [...prev, { id: localId, url: "", name: file.name, uploading: true }]);
+      try {
+        const fd = new FormData();
+        fd.append("file", file);
+        const res = await fetch(`${API}/storage/upload/video`, { method: "POST", body: fd });
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+        setBatchUploads(prev => prev.map(u => u.id === localId ? { ...u, url: data.url, uploading: false } : u));
+      } catch {
+        setBatchUploads(prev => prev.filter(u => u.id !== localId));
+        setBatchError(`Falha ao enviar "${file.name}"`);
+      }
+    }
+  }
+
+  function removeBatchUpload(id: string) {
+    setBatchUploads(prev => prev.filter(u => u.id !== id));
+  }
+
+  const batchVideoUrls: string[] = batchSource === "existing"
+    ? reels.filter(r => batchSelectedReels.has(r.media_id)).map(r => r.video_url)
+    : batchUploads.filter(u => u.url).map(u => u.url);
+
+  async function startBatchProcess() {
+    if (batchVideoUrls.length === 0) {
+      setBatchError(batchSource === "existing" ? "Selecione ao menos 1 Reels da lista!" : "Envie ao menos 1 vídeo!");
+      return;
+    }
+    setBatchError(null);
+    setBatchProcessing(true);
+    setBatchProgress(0);
+    setBatchResults([]);
+
+    try {
+      const res = await fetch(`${API}/batch-editor/process`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          videos: batchVideoUrls,
+          zoom,
+          pos_x: posX,
+          pos_y: posY,
+          border_color: borderColor,
+          fill_top_pct: fillTop,
+          fill_bottom_pct: fillBottom,
+          fill_mode: fillMode,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao iniciar processamento em lote");
+      }
+      const data = await res.json();
+      const jobId = data.job_id;
+
+      let attempts = 0;
+      const maxAttempts = 240; // até 20min (5s x 240) — lote de até 50 vídeos pode demorar
+      const poll = setInterval(async () => {
+        attempts++;
+        try {
+          const statusRes = await fetch(`${API}/batch-editor/status/${jobId}`);
+          const statusData = await statusRes.json();
+          setBatchProgress(statusData.progress || 0);
+          setBatchResults(statusData.videos || []);
+
+          if (statusData.status === "done") {
+            clearInterval(poll);
+            setBatchProcessing(false);
+          } else if (attempts > maxAttempts) {
+            clearInterval(poll);
+            setBatchError("Timeout aguardando o processamento em lote.");
+            setBatchProcessing(false);
+          }
+        } catch { clearInterval(poll); setBatchProcessing(false); }
+      }, 5000);
+    } catch (e: any) {
+      setBatchError(e.message);
+      setBatchProcessing(false);
+    }
+  }
+
+  // Prévia aproximada (CSS) de como o enquadramento vai ficar — não é o
+  // resultado exato do FFmpeg, só uma referência visual rápida.
+  const previewThumb = batchSource === "existing"
+    ? reels.find(r => batchSelectedReels.has(r.media_id))?.thumbnail_url
+    : undefined;
+
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
 
@@ -219,6 +359,7 @@ export default function InstagramDarkPage() {
           33% { transform: translate(4%, 6%) scale(1.08); }
           66% { transform: translate(-4%, -3%) scale(0.95); }
         }
+        input[type="range"] { accent-color: #7c6df5; }
       `}</style>
 
       <div className="relative z-10 p-6 max-w-4xl mx-auto flex flex-col gap-6">
@@ -243,7 +384,7 @@ export default function InstagramDarkPage() {
 
         {/* Abas */}
         <div className="flex gap-1 p-1 rounded-[10px] w-fit" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-          {[{ id: "perfil", label: "🔍 Buscar por perfil" }, { id: "link", label: "🔗 Link de um Reels" }].map(t => (
+          {[{ id: "perfil", label: "🔍 Buscar por perfil" }, { id: "link", label: "🔗 Link de um Reels" }, { id: "lote", label: "🎛️ Editor em Massa" }].map(t => (
             <button key={t.id} type="button" onClick={() => setTab(t.id as any)}
               className="px-4 py-2 rounded-[8px] text-sm font-medium cursor-pointer border-none transition-all"
               style={tab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
@@ -291,10 +432,10 @@ export default function InstagramDarkPage() {
           </div>
         )}
 
-        {error && <p className="text-xs text-[#f87171] -mt-3">{error}</p>}
+        {error && tab !== "lote" && <p className="text-xs text-[#f87171] -mt-3">{error}</p>}
 
-        {/* Grid de reels */}
-        {reels.length > 0 && (
+        {/* Grid de reels (aba Buscar/Link) */}
+        {tab !== "lote" && reels.length > 0 && (
           <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-medium text-[#9090a8]">{reels.length} Reels encontrados — {selected.size} selecionados</p>
@@ -335,8 +476,8 @@ export default function InstagramDarkPage() {
           </div>
         )}
 
-        {/* Faixa (molde) + marca d'água + custo ao vivo */}
-        {reels.length > 0 && (
+        {/* Faixa (molde) + marca d'água + custo ao vivo (aba Buscar/Link) */}
+        {tab !== "lote" && reels.length > 0 && (
           <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div>
               <label className="text-xs font-medium text-[#9090a8] block mb-2">Faixa no topo (opcional — nome do canal ou tema)</label>
@@ -405,8 +546,8 @@ export default function InstagramDarkPage() {
           </div>
         )}
 
-        {/* Resultados */}
-        {results.length > 0 && (
+        {/* Resultados (aba Buscar/Link) */}
+        {tab !== "lote" && results.length > 0 && (
           <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <p className="text-sm font-semibold mb-3">Resultado</p>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -428,9 +569,213 @@ export default function InstagramDarkPage() {
             </div>
           </div>
         )}
+
+        {/* ═══════════════════════════════════════════════════════════
+            ABA: EDITOR EM MASSA
+        ═══════════════════════════════════════════════════════════ */}
+        {tab === "lote" && (
+          <>
+            {/* Origem dos vídeos */}
+            <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-4" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                {[{ id: "existing", label: "📋 Dos Reels já buscados" }, { id: "upload", label: "⬆️ Upload novo" }].map(s => (
+                  <button key={s.id} type="button" onClick={() => setBatchSource(s.id as any)}
+                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none transition-all"
+                    style={batchSource === s.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+
+              {batchSource === "existing" ? (
+                reels.length === 0 ? (
+                  <p className="text-xs text-[#55556a]">Nenhum Reels buscado ainda — vá na aba "Buscar por perfil" primeiro, ou troque pra "Upload novo".</p>
+                ) : (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs font-medium text-[#9090a8]">{reels.length} disponíveis — {batchSelectedReels.size} selecionados</p>
+                      <div className="flex gap-2">
+                        <button type="button" onClick={() => setBatchSelectedReels(new Set(reels.map(r => r.media_id)))}
+                          className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>
+                          Selecionar todos
+                        </button>
+                        <button type="button" onClick={() => setBatchSelectedReels(new Set())}
+                          className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
+                          Limpar
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-h-80 overflow-y-auto">
+                      {reels.map(reel => (
+                        <div key={reel.media_id} onClick={() => toggleBatchReel(reel.media_id)}
+                          className="relative rounded-xl overflow-hidden cursor-pointer"
+                          style={{ aspectRatio: "9/16", border: batchSelectedReels.has(reel.media_id) ? "2px solid #7c6df5" : "1px solid rgba(255,255,255,0.1)" }}>
+                          <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                          <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                            style={{ background: batchSelectedReels.has(reel.media_id) ? "#7c6df5" : "rgba(0,0,0,0.5)" }}>
+                            {batchSelectedReels.has(reel.media_id) && <span className="text-white text-xs">✓</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )
+              ) : (
+                <>
+                  <div onClick={() => batchFileRef.current?.click()}
+                    onDrop={e => { e.preventDefault(); handleBatchFilesSelected(e.dataTransfer.files); }}
+                    onDragOver={e => e.preventDefault()}
+                    className="flex flex-col items-center justify-center rounded-xl cursor-pointer py-8 mb-3"
+                    style={{ border: "1.5px dashed rgba(124,109,245,0.4)", background: "rgba(124,109,245,0.05)" }}>
+                    <span className="text-2xl mb-1.5">⬆️</span>
+                    <p className="text-xs text-[#9090a8]">Arraste vídeos ou clique — até 50 vídeos, 100MB cada</p>
+                  </div>
+                  <input ref={batchFileRef} type="file" accept="video/*" multiple className="hidden"
+                    onChange={e => handleBatchFilesSelected(e.target.files)} />
+                  {batchUploads.length > 0 && (
+                    <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+                      {batchUploads.map(u => (
+                        <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-[8px]" style={{ background: "rgba(255,255,255,0.04)" }}>
+                          <span className="text-[11px] text-[#9090a8] truncate flex-1">{u.name}</span>
+                          {u.uploading ? (
+                            <span className="text-[10px] text-[#60a5fa]">Enviando...</span>
+                          ) : (
+                            <button type="button" onClick={() => removeBatchUpload(u.id)}
+                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+                              Remover
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Configuração do enquadramento */}
+            <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <p className="text-sm font-semibold">🎛️ Enquadramento (aplicado a todos os vídeos selecionados)</p>
+
+              <div className="flex flex-col md:flex-row gap-5">
+                {/* Prévia aproximada */}
+                <div className="flex justify-center md:justify-start">
+                  <div className="rounded-[24px] p-2" style={{ background: "#000", border: "3px solid #2a2a35", width: "150px" }}>
+                    <div className="rounded-[16px] overflow-hidden relative" style={{ aspectRatio: "9/16", background: borderColor }}>
+                      {previewThumb ? (
+                        <img src={previewThumb} alt=""
+                          className="absolute"
+                          style={{
+                            width: `${zoom}%`, height: `${zoom}%`,
+                            top: `${posY}%`, left: `${posX}%`,
+                            transform: "translate(-50%,-50%)",
+                            objectFit: "contain",
+                          }} />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-[10px] text-[#55556a]">
+                          prévia aproximada
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex-1 flex flex-col gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
+                    <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
+                      <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição vertical: {posY}%</label>
+                      <input type="range" min={0} max={100} value={posY} onChange={e => setPosY(Number(e.target.value))} className="w-full" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor das bordas</label>
+                    <div className="flex items-center gap-2">
+                      <input type="color" value={borderColor} onChange={e => setBorderColor(e.target.value)}
+                        className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                      <span className="text-xs text-[#9090a8]">{borderColor}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+
+              <div>
+                <p className="text-xs font-medium text-[#9090a8] mb-2">Corte do vídeo original (remove legenda/marca já queimada)</p>
+                <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  <button type="button" onClick={() => setFillMode("manual")}
+                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none"
+                    style={fillMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                    Manual
+                  </button>
+                  <button type="button" onClick={() => setFillMode("automatico")}
+                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none flex items-center gap-1.5"
+                    style={fillMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                    Automático
+                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}>em breve</span>
+                  </button>
+                </div>
+                {fillMode === "automatico" && (
+                  <p className="text-[10px] text-[#f59e0b] mb-3">Detecção automática ainda não está pronta — por enquanto isso vai usar os valores manuais abaixo.</p>
+                )}
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Preencher no topo: {fillTop}%</label>
+                    <input type="range" min={0} max={45} value={fillTop} onChange={e => setFillTop(Number(e.target.value))} className="w-full" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Preencher no rodapé: {fillBottom}%</label>
+                    <input type="range" min={0} max={45} value={fillBottom} onChange={e => setFillBottom(Number(e.target.value))} className="w-full" />
+                  </div>
+                </div>
+                <p className="text-[10px] text-[#55556a] mt-2">Conteúdo central restante: {100 - fillTop - fillBottom}%</p>
+              </div>
+
+              {batchError && <p className="text-xs text-[#f87171]">{batchError}</p>}
+
+              <button type="button" onClick={startBatchProcess} disabled={batchProcessing}
+                className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+                {batchProcessing ? `Processando... ${batchProgress}%` : `Processar ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""}`}
+              </button>
+            </div>
+
+            {/* Resultados do lote */}
+            {batchResults.length > 0 && (
+              <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <p className="text-sm font-semibold mb-3">Resultado do lote</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {batchResults.map((r, i) => (
+                    <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
+                      {r.status === "done" && r.final_url ? (
+                        <>
+                          <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
+                          <a href={r.final_url} download className="block text-center py-2 text-xs no-underline" style={{ color: "#3ecf8e" }}>⬇️ Baixar</a>
+                        </>
+                      ) : (
+                        <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
+                          <span className="text-xs text-[#f87171] font-medium">❌ Falhou</span>
+                          {r.error && <p className="text-[10px] text-[#9090a8] text-center leading-relaxed line-clamp-6">{r.error}</p>}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Modal de confirmação */}
+      {/* Modal de confirmação (aba Buscar/Link) */}
       {confirmOpen && (
         <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.65)", backdropFilter: "blur(6px)" }} onClick={() => setConfirmOpen(false)}>
           <div className="rounded-2xl w-full max-w-sm mx-4 overflow-hidden" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)", boxShadow: "0 40px 80px rgba(0,0,0,0.6)" }} onClick={e => e.stopPropagation()}>
