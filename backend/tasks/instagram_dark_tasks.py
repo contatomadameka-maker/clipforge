@@ -136,7 +136,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-shortest",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
-        ], check=True, capture_output=True, timeout=120)
+        ], check=True, capture_output=True, timeout=240)
         base_path = barred_path
     elif target_width != orig_width:
         # Sem faixa, mas ainda precisa reduzir resolução
@@ -146,7 +146,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-vf", f"scale={target_width}:{target_height}",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
-        ], check=True, capture_output=True, timeout=120)
+        ], check=True, capture_output=True, timeout=240)
         base_path = barred_path
 
     if watermark_path:
@@ -156,7 +156,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-filter_complex", "overlay=W-w-24:H-h-24",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
             final_path,
-        ], check=True, capture_output=True, timeout=120)
+        ], check=True, capture_output=True, timeout=240)
     else:
         final_path = base_path
 
