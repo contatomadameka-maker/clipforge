@@ -18,6 +18,7 @@
 import os
 import subprocess
 import tempfile
+import time
 import uuid
 import boto3
 import httpx
@@ -123,13 +124,19 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
         # estava estourando o timeout de 120s antes).
         _generate_bar_image(bar_text or "", bar_color or "#7c6df5", text_color or "#ffffff", target_width, BAR_HEIGHT, bar_img_path)
 
+        start_time = time.time()
+        # -framerate 24 na imagem em loop evita o FFmpeg renegociar
+        # timebase/fps entre a imagem parada e o vídeo real a cada
+        # quadro — sem isso, o vstack ficava extremamente lento (estourava
+        # até 240s numa faixa só).
         filter_complex = (
-            f"[1:v]scale={target_width}:{target_height}[vid];"
-            f"[0:v][vid]vstack=inputs=2[vout]"
+            f"[1:v]scale={target_width}:{target_height},fps=24[vid];"
+            f"[0:v]fps=24[barfps];"
+            f"[barfps][vid]vstack=inputs=2[vout]"
         )
         subprocess.run([
             "ffmpeg", "-y", "-threads", "1",
-            "-loop", "1", "-i", bar_img_path,
+            "-loop", "1", "-framerate", "24", "-i", bar_img_path,
             "-i", raw_path,
             "-filter_complex", filter_complex,
             "-map", "[vout]", "-map", "1:a?",
@@ -137,6 +144,8 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
         ], check=True, capture_output=True, timeout=240)
+        elapsed = time.time() - start_time
+        print(f"[instagram-dark] faixa aplicada em {elapsed:.1f}s")
         base_path = barred_path
     elif target_width != orig_width:
         # Sem faixa, mas ainda precisa reduzir resolução
