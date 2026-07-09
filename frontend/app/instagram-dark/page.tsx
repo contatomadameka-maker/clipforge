@@ -32,7 +32,7 @@ export default function InstagramDarkPage() {
   const [watermarkUrl, setWatermarkUrl] = useState("");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<{ original_url: string; final_url?: string; status: string }[]>([]);
+  const [results, setResults] = useState<{ original_url: string; final_url?: string; status: string; error?: string }[]>([]);
 
   const watermarkFileRef = useRef<HTMLInputElement>(null);
 
@@ -267,7 +267,10 @@ export default function InstagramDarkPage() {
                       <a href={r.final_url} download className="block text-center py-2 text-xs no-underline" style={{ color: "#3ecf8e" }}>⬇️ Baixar</a>
                     </>
                   ) : (
-                    <div className="flex items-center justify-center p-4 text-xs text-[#f87171]" style={{ aspectRatio: "9/16" }}>Falhou</div>
+                    <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
+                      <span className="text-xs text-[#f87171] font-medium">❌ Falhou</span>
+                      {r.error && <p className="text-[10px] text-[#9090a8] text-center leading-relaxed line-clamp-6">{r.error}</p>}
+                    </div>
                   )}
                 </div>
               ))}
