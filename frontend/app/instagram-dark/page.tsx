@@ -21,7 +21,7 @@ export default function InstagramDarkPage() {
   const [profileInput, setProfileInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [nextMaxId, setNextMaxId] = useState<string | null>(null);
+  const [nextPageId, setNextPageId] = useState<string | null>(null);
   const [reels, setReels] = useState<ReelItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -49,10 +49,10 @@ export default function InstagramDarkPage() {
     const append = !!cursor;
     if (append) setLoadingMore(true); else setLoading(true);
     setError(null);
-    if (!append) { setReels([]); setSelected(new Set()); setNextMaxId(null); }
+    if (!append) { setReels([]); setSelected(new Set()); setNextPageId(null); }
     try {
       let url = `${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}`;
-      if (cursor) url += `&max_id=${encodeURIComponent(cursor)}`;
+      if (cursor) url += `&page_id=${encodeURIComponent(cursor)}`;
       const res = await fetch(url);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -60,7 +60,7 @@ export default function InstagramDarkPage() {
       }
       const data = await res.json();
       setReels(prev => append ? [...prev, ...data.reels] : data.reels);
-      setNextMaxId(data.next_max_id);
+      setNextPageId(data.next_page_id);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -189,8 +189,8 @@ export default function InstagramDarkPage() {
                 </div>
               ))}
             </div>
-            {nextMaxId && (
-              <button type="button" onClick={() => searchReels(nextMaxId)} disabled={loadingMore}
+            {nextPageId && (
+              <button type="button" onClick={() => searchReels(nextPageId)} disabled={loadingMore}
                 className="w-full mt-4 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
                 style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
                 {loadingMore ? "Carregando..." : "Carregar mais Reels"}
