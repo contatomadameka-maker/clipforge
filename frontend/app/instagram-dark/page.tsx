@@ -21,7 +21,7 @@ export default function InstagramDarkPage() {
   const [profileInput, setProfileInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
-  const [currentCount, setCurrentCount] = useState(24);
+  const [nextMaxId, setNextMaxId] = useState<string | null>(null);
   const [reels, setReels] = useState<ReelItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -44,20 +44,23 @@ export default function InstagramDarkPage() {
     onDone(data.url);
   }
 
-  async function searchReels(count: number = 24, append: boolean = false) {
+  async function searchReels(cursor: string | null = null) {
     if (!profileInput.trim()) return;
+    const append = !!cursor;
     if (append) setLoadingMore(true); else setLoading(true);
     setError(null);
-    if (!append) { setReels([]); setSelected(new Set()); }
+    if (!append) { setReels([]); setSelected(new Set()); setNextMaxId(null); }
     try {
-      const res = await fetch(`${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}&count=${count}`);
+      let url = `${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}`;
+      if (cursor) url += `&max_id=${encodeURIComponent(cursor)}`;
+      const res = await fetch(url);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao buscar Reels desse perfil");
       }
       const data = await res.json();
-      setReels(data);
-      setCurrentCount(count);
+      setReels(prev => append ? [...prev, ...data.reels] : data.reels);
+      setNextMaxId(data.next_max_id);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -186,8 +189,8 @@ export default function InstagramDarkPage() {
                 </div>
               ))}
             </div>
-            {reels.length >= currentCount && (
-              <button type="button" onClick={() => searchReels(currentCount + 24, true)} disabled={loadingMore}
+            {nextMaxId && (
+              <button type="button" onClick={() => searchReels(nextMaxId)} disabled={loadingMore}
                 className="w-full mt-4 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
                 style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
                 {loadingMore ? "Carregando..." : "Carregar mais Reels"}
