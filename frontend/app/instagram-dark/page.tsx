@@ -329,11 +329,15 @@ export default function InstagramDarkPage() {
     }
   }
 
-  // Prévia aproximada (CSS) de como o enquadramento vai ficar — não é o
-  // resultado exato do FFmpeg, só uma referência visual rápida.
-  const previewThumb = batchSource === "existing"
-    ? reels.find(r => batchSelectedReels.has(r.media_id))?.thumbnail_url
-    : undefined;
+  // Prévia — usa o próprio <video> do arquivo (pega o frame real), não uma
+  // thumbnail estática, pra funcionar tanto com Reels já buscados quanto
+  // com upload novo. O usuário pode clicar num item da lista pra trocar
+  // QUAL vídeo aparece na prévia — isso não muda o que é aplicado, já que
+  // a configuração é sempre a mesma pra todos os vídeos do lote.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const effectivePreviewUrl = (previewUrl && batchVideoUrls.includes(previewUrl))
+    ? previewUrl
+    : (batchVideoUrls[0] || null);
 
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
@@ -571,181 +575,202 @@ export default function InstagramDarkPage() {
         )}
 
         {/* ═══════════════════════════════════════════════════════════
-            ABA: EDITOR EM MASSA
+            ABA: EDITOR EM MASSA — layout 3 colunas (lista | prévia | config)
         ═══════════════════════════════════════════════════════════ */}
         {tab === "lote" && (
           <>
-            {/* Origem dos vídeos */}
-            <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-              <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-4" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                {[{ id: "existing", label: "📋 Dos Reels já buscados" }, { id: "upload", label: "⬆️ Upload novo" }].map(s => (
-                  <button key={s.id} type="button" onClick={() => setBatchSource(s.id as any)}
-                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none transition-all"
-                    style={batchSource === s.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-                    {s.label}
-                  </button>
-                ))}
-              </div>
+            <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_320px] gap-5 items-start">
 
-              {batchSource === "existing" ? (
-                reels.length === 0 ? (
-                  <p className="text-xs text-[#55556a]">Nenhum Reels buscado ainda — vá na aba "Buscar por perfil" primeiro, ou troque pra "Upload novo".</p>
+              {/* ── Coluna esquerda: origem + lista de vídeos ── */}
+              <div className="rounded-2xl p-4 flex flex-col gap-3" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  {[{ id: "existing", label: "📋 Buscados" }, { id: "upload", label: "⬆️ Upload" }].map(s => (
+                    <button key={s.id} type="button" onClick={() => setBatchSource(s.id as any)}
+                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
+                      style={batchSource === s.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+
+                {batchSource === "existing" ? (
+                  reels.length === 0 ? (
+                    <p className="text-[11px] text-[#55556a] leading-relaxed">Nenhum Reels buscado ainda — vá na aba "Buscar por perfil", ou troque pra "Upload".</p>
+                  ) : (
+                    <>
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] text-[#55556a]">{batchSelectedReels.size} de {reels.length}</p>
+                        <div className="flex gap-1.5">
+                          <button type="button" onClick={() => setBatchSelectedReels(new Set(reels.map(r => r.media_id)))}
+                            className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>
+                            Todos
+                          </button>
+                          <button type="button" onClick={() => setBatchSelectedReels(new Set())}
+                            className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
+                            Limpar
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-1.5 max-h-[520px] overflow-y-auto">
+                        {reels.map(reel => {
+                          const isSelected = batchSelectedReels.has(reel.media_id);
+                          const isPreviewing = effectivePreviewUrl === reel.video_url;
+                          return (
+                            <div key={reel.media_id}
+                              className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                              style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                              onClick={() => setPreviewUrl(reel.video_url)}>
+                              <div onClick={e => { e.stopPropagation(); toggleBatchReel(reel.media_id); }}
+                                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
+                                style={{ background: isSelected ? "#7c6df5" : "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
+                                {isSelected && <span className="text-white text-[9px]">✓</span>}
+                              </div>
+                              <div className="w-8 rounded overflow-hidden flex-shrink-0" style={{ aspectRatio: "9/16" }}>
+                                <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                              </div>
+                              <span className="text-[10px] text-[#9090a8] truncate flex-1">{Math.round(reel.duration_seconds)}s · {reel.views.toLocaleString()} views</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )
                 ) : (
                   <>
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs font-medium text-[#9090a8]">{reels.length} disponíveis — {batchSelectedReels.size} selecionados</p>
-                      <div className="flex gap-2">
-                        <button type="button" onClick={() => setBatchSelectedReels(new Set(reels.map(r => r.media_id)))}
-                          className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>
-                          Selecionar todos
-                        </button>
-                        <button type="button" onClick={() => setBatchSelectedReels(new Set())}
-                          className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>
-                          Limpar
-                        </button>
+                    <div onClick={() => batchFileRef.current?.click()}
+                      onDrop={e => { e.preventDefault(); handleBatchFilesSelected(e.dataTransfer.files); }}
+                      onDragOver={e => e.preventDefault()}
+                      className="flex flex-col items-center justify-center rounded-xl cursor-pointer py-6"
+                      style={{ border: "1.5px dashed rgba(124,109,245,0.4)", background: "rgba(124,109,245,0.05)" }}>
+                      <span className="text-xl mb-1">⬆️</span>
+                      <p className="text-[10px] text-[#9090a8] text-center px-2">Arraste ou clique — até 50, 100MB cada</p>
+                    </div>
+                    <input ref={batchFileRef} type="file" accept="video/*" multiple className="hidden"
+                      onChange={e => handleBatchFilesSelected(e.target.files)} />
+                    {batchUploads.length > 0 && (
+                      <div className="flex flex-col gap-1.5 max-h-[440px] overflow-y-auto">
+                        {batchUploads.map(u => {
+                          const isPreviewing = !!u.url && effectivePreviewUrl === u.url;
+                          return (
+                            <div key={u.id}
+                              className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                              style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                              onClick={() => u.url && setPreviewUrl(u.url)}>
+                              <span className="text-[10px] text-[#9090a8] truncate flex-1">{u.name}</span>
+                              {u.uploading ? (
+                                <span className="text-[9px] text-[#60a5fa] flex-shrink-0">Enviando...</span>
+                              ) : (
+                                <button type="button" onClick={e => { e.stopPropagation(); removeBatchUpload(u.id); }}
+                                  className="text-[9px] px-1.5 py-0.5 rounded-[6px] cursor-pointer border-none flex-shrink-0" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+                                  Remover
+                                </button>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 max-h-80 overflow-y-auto">
-                      {reels.map(reel => (
-                        <div key={reel.media_id} onClick={() => toggleBatchReel(reel.media_id)}
-                          className="relative rounded-xl overflow-hidden cursor-pointer"
-                          style={{ aspectRatio: "9/16", border: batchSelectedReels.has(reel.media_id) ? "2px solid #7c6df5" : "1px solid rgba(255,255,255,0.1)" }}>
-                          <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
-                          <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-                            style={{ background: batchSelectedReels.has(reel.media_id) ? "#7c6df5" : "rgba(0,0,0,0.5)" }}>
-                            {batchSelectedReels.has(reel.media_id) && <span className="text-white text-xs">✓</span>}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
+                    )}
                   </>
-                )
-              ) : (
-                <>
-                  <div onClick={() => batchFileRef.current?.click()}
-                    onDrop={e => { e.preventDefault(); handleBatchFilesSelected(e.dataTransfer.files); }}
-                    onDragOver={e => e.preventDefault()}
-                    className="flex flex-col items-center justify-center rounded-xl cursor-pointer py-8 mb-3"
-                    style={{ border: "1.5px dashed rgba(124,109,245,0.4)", background: "rgba(124,109,245,0.05)" }}>
-                    <span className="text-2xl mb-1.5">⬆️</span>
-                    <p className="text-xs text-[#9090a8]">Arraste vídeos ou clique — até 50 vídeos, 100MB cada</p>
-                  </div>
-                  <input ref={batchFileRef} type="file" accept="video/*" multiple className="hidden"
-                    onChange={e => handleBatchFilesSelected(e.target.files)} />
-                  {batchUploads.length > 0 && (
-                    <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto">
-                      {batchUploads.map(u => (
-                        <div key={u.id} className="flex items-center justify-between px-3 py-2 rounded-[8px]" style={{ background: "rgba(255,255,255,0.04)" }}>
-                          <span className="text-[11px] text-[#9090a8] truncate flex-1">{u.name}</span>
-                          {u.uploading ? (
-                            <span className="text-[10px] text-[#60a5fa]">Enviando...</span>
-                          ) : (
-                            <button type="button" onClick={() => removeBatchUpload(u.id)}
-                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
-                              Remover
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-
-            {/* Configuração do enquadramento */}
-            <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-              <p className="text-sm font-semibold">🎛️ Enquadramento (aplicado a todos os vídeos selecionados)</p>
-
-              <div className="flex flex-col md:flex-row gap-5">
-                {/* Prévia aproximada */}
-                <div className="flex justify-center md:justify-start">
-                  <div className="rounded-[24px] p-2" style={{ background: "#000", border: "3px solid #2a2a35", width: "150px" }}>
-                    <div className="rounded-[16px] overflow-hidden relative" style={{ aspectRatio: "9/16", background: borderColor }}>
-                      {previewThumb ? (
-                        <img src={previewThumb} alt=""
-                          className="absolute"
-                          style={{
-                            width: `${zoom}%`, height: `${zoom}%`,
-                            top: `${posY}%`, left: `${posX}%`,
-                            transform: "translate(-50%,-50%)",
-                            objectFit: "contain",
-                          }} />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-[10px] text-[#55556a]">
-                          prévia aproximada
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex-1 flex flex-col gap-4">
-                  <div>
-                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
-                    <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
-                      <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição vertical: {posY}%</label>
-                      <input type="range" min={0} max={100} value={posY} onChange={e => setPosY(Number(e.target.value))} className="w-full" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor das bordas</label>
-                    <div className="flex items-center gap-2">
-                      <input type="color" value={borderColor} onChange={e => setBorderColor(e.target.value)}
-                        className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                      <span className="text-xs text-[#9090a8]">{borderColor}</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
-
-              <div>
-                <p className="text-xs font-medium text-[#9090a8] mb-2">Corte do vídeo original (remove legenda/marca já queimada)</p>
-                <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                  <button type="button" onClick={() => setFillMode("manual")}
-                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none"
-                    style={fillMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-                    Manual
-                  </button>
-                  <button type="button" onClick={() => setFillMode("automatico")}
-                    className="px-3.5 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none flex items-center gap-1.5"
-                    style={fillMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-                    Automático
-                    <span className="text-[9px] px-1.5 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}>em breve</span>
-                  </button>
-                </div>
-                {fillMode === "automatico" && (
-                  <p className="text-[10px] text-[#f59e0b] mb-3">Detecção automática ainda não está pronta — por enquanto isso vai usar os valores manuais abaixo.</p>
                 )}
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Preencher no topo: {fillTop}%</label>
-                    <input type="range" min={0} max={45} value={fillTop} onChange={e => setFillTop(Number(e.target.value))} className="w-full" />
-                  </div>
-                  <div>
-                    <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Preencher no rodapé: {fillBottom}%</label>
-                    <input type="range" min={0} max={45} value={fillBottom} onChange={e => setFillBottom(Number(e.target.value))} className="w-full" />
-                  </div>
-                </div>
-                <p className="text-[10px] text-[#55556a] mt-2">Conteúdo central restante: {100 - fillTop - fillBottom}%</p>
               </div>
 
-              {batchError && <p className="text-xs text-[#f87171]">{batchError}</p>}
+              {/* ── Coluna central: prévia grande ── */}
+              <div className="rounded-2xl p-6 flex flex-col items-center justify-center gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)", minHeight: "560px" }}>
+                <div className="rounded-[28px] p-2.5" style={{ background: "#000", border: "4px solid #2a2a35", width: "300px" }}>
+                  <div className="rounded-[20px] overflow-hidden relative" style={{ aspectRatio: "9/16", background: borderColor }}>
+                    {effectivePreviewUrl ? (
+                      <video
+                        key={effectivePreviewUrl}
+                        src={effectivePreviewUrl}
+                        muted
+                        playsInline
+                        preload="auto"
+                        onLoadedMetadata={e => { (e.currentTarget as HTMLVideoElement).currentTime = 0.1; }}
+                        className="absolute"
+                        style={{
+                          width: `${zoom}%`, height: `${zoom}%`,
+                          top: `${posY}%`, left: `${posX}%`,
+                          transform: "translate(-50%,-50%)",
+                          objectFit: "contain",
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center text-xs text-[#55556a] text-center px-4">
+                        Selecione ou envie um vídeo pra ver a prévia
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#55556a] text-center max-w-xs">
+                  {batchVideoUrls.length > 0
+                    ? `Prévia aproximada — a mesma edição vai ser aplicada aos ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""} selecionado${batchVideoUrls.length !== 1 ? "s" : ""}. Clique em outro vídeo na lista pra conferir o enquadramento dele.`
+                    : "Selecione vídeos na lista à esquerda pra começar."}
+                </p>
+              </div>
 
-              <button type="button" onClick={startBatchProcess} disabled={batchProcessing}
-                className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
-                style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
-                {batchProcessing ? `Processando... ${batchProgress}%` : `Processar ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""}`}
-              </button>
+              {/* ── Coluna direita: config de enquadramento ── */}
+              <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <p className="text-sm font-semibold">🎛️ Enquadramento</p>
+
+                <div>
+                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
+                  <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
+                  <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição vertical: {posY}%</label>
+                  <input type="range" min={0} max={100} value={posY} onChange={e => setPosY(Number(e.target.value))} className="w-full" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor das bordas</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={borderColor} onChange={e => setBorderColor(e.target.value)}
+                      className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                    <span className="text-xs text-[#9090a8]">{borderColor}</span>
+                  </div>
+                </div>
+
+                <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+
+                <div>
+                  <p className="text-xs font-medium text-[#9090a8] mb-2">Corte do original (remove legenda/marca queimada)</p>
+                  <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                    <button type="button" onClick={() => setFillMode("manual")}
+                      className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                      style={fillMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                      Manual
+                    </button>
+                    <button type="button" onClick={() => setFillMode("automatico")}
+                      className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none flex items-center gap-1"
+                      style={fillMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                      Automático
+                      <span className="text-[8px] px-1 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}>em breve</span>
+                    </button>
+                  </div>
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Topo: {fillTop}%</label>
+                      <input type="range" min={0} max={45} value={fillTop} onChange={e => setFillTop(Number(e.target.value))} className="w-full" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Rodapé: {fillBottom}%</label>
+                      <input type="range" min={0} max={45} value={fillBottom} onChange={e => setFillBottom(Number(e.target.value))} className="w-full" />
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-[#55556a] mt-2">Conteúdo central restante: {100 - fillTop - fillBottom}%</p>
+                </div>
+
+                {batchError && <p className="text-xs text-[#f87171]">{batchError}</p>}
+
+                <button type="button" onClick={startBatchProcess} disabled={batchProcessing}
+                  className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+                  {batchProcessing ? `Processando... ${batchProgress}%` : `Processar ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""}`}
+                </button>
+              </div>
             </div>
 
             {/* Resultados do lote */}
