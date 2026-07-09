@@ -108,8 +108,13 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
         # Faixa colorida do tamanho da largura do vídeo + texto centralizado,
         # empilhada ACIMA do vídeo (escalado só na largura) via vstack —
         # a altura final da tela cresce (barra + vídeo), nada é cortado.
+        # IMPORTANTE: a faixa (color source) não tem duração fixa aqui —
+        # fica "infinita" de propósito, e o -shortest no final corta ela
+        # no mesmo tamanho do vídeo real. Antes eu tinha colocado d=1s
+        # fixo, o que travava o FFmpeg pra sempre tentando casar uma
+        # faixa de 1s com um vídeo de 10s+ no vstack.
         filter_complex = (
-            f"color=c=0x{color}:s={target_width}x{BAR_HEIGHT}:d=1,"
+            f"color=c=0x{color}:s={target_width}x{BAR_HEIGHT},"
             f"drawtext=fontfile={FONT_PATH}:text='{text}':fontcolor=0x{txt_color}:fontsize=40:"
             f"x=(w-text_w)/2:y=(h-text_h)/2[bar];"
             f"[0:v]scale={target_width}:{target_height}[vid];"
@@ -120,9 +125,10 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-i", raw_path,
             "-filter_complex", filter_complex,
             "-map", "[vout]", "-map", "0:a?",
+            "-shortest",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
-        ], check=True, capture_output=True)
+        ], check=True, capture_output=True, timeout=120)
         base_path = barred_path
     elif target_width != orig_width:
         # Sem faixa, mas ainda precisa reduzir resolução
@@ -132,7 +138,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-vf", f"scale={target_width}:{target_height}",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
-        ], check=True, capture_output=True)
+        ], check=True, capture_output=True, timeout=120)
         base_path = barred_path
 
     if watermark_path:
@@ -142,7 +148,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
             "-filter_complex", "overlay=W-w-24:H-h-24",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
             final_path,
-        ], check=True, capture_output=True)
+        ], check=True, capture_output=True, timeout=120)
     else:
         final_path = base_path
 
