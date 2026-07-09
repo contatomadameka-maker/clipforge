@@ -205,7 +205,39 @@ def run_batch_job(task_id: str, user_id: str, video_urls: list, bar_text: str | 
                     print(f"[instagram-dark] ERRO ao processar {video_url}: {e}")
                     results.append({"original_url": video_url, "status": "error", "error": str(e)})
 
+        # Cobra só pelos que deram certo — 25 créditos por Reels baixado
+        # com sucesso (constante duplicada aqui de propósito, junto com
+        # CREDITS_PER_REEL do router — se mudar o preço, mudar nos dois)
+        success_count = sum(1 for r in results if r["status"] == "done")
+        if success_count > 0:
+            _charge_credits(user_id, success_count * 25, f"Instagram Dark — {success_count} Reels processados")
+
         TASKS[task_id] = {"status": "done", "progress": 100, "videos": results}
     except Exception as e:
         print(f"[instagram-dark] ERRO GERAL na task {task_id}: {e}")
         TASKS[task_id] = {"status": "error", "progress": 0, "error": str(e)}
+
+
+def _charge_credits(user_id: str, amount: int, description: str):
+    """Debita créditos direto no banco (mesma lógica do credits.py) —
+    chamado só depois do processamento terminar, e só pela quantidade
+    de Reels que realmente deram certo."""
+    try:
+        from db.database import get_supabase
+        db = get_supabase()
+        res = db.table("user_credits").select("balance").eq("user_id", user_id).single().execute()
+        if not res.data:
+            print(f"[instagram-dark] usuário {user_id} não encontrado pra cobrança")
+            return
+        balance = res.data.get("balance", 0)
+        new_balance = max(0, balance - amount)
+        db.table("user_credits").update({"balance": new_balance}).eq("user_id", user_id).execute()
+        db.table("credit_transactions").insert({
+            "user_id": user_id,
+            "amount": -amount,
+            "type": "debit",
+            "description": description,
+        }).execute()
+        print(f"[instagram-dark] cobrado {amount} créditos de {user_id}, saldo novo: {new_balance}")
+    except Exception as e:
+        print(f"[instagram-dark] ERRO ao cobrar créditos: {e}")
