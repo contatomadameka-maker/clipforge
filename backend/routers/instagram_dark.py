@@ -119,6 +119,51 @@ async def list_reels(profile: str, page_id: Optional[str] = None):
         return ListReelsResponse(reels=result, next_page_id=next_page_id)
 
 
+@router.get("/reel-by-url", response_model=ReelItem)
+async def reel_by_url(url: str):
+    """Busca 1 Reels específico direto pelo link (sem precisar navegar
+    pelo perfil inteiro) — usa /v2/media/info/by/url da HikerAPI."""
+    if not settings.hikerapi_key:
+        raise HTTPException(status_code=503, detail="HIKERAPI_KEY não configurada ainda no backend.")
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        media_res = await client.get(
+            f"{HIKERAPI_BASE}/v2/media/info/by/url",
+            params={"url": url.strip()},
+            headers={"x-access-key": settings.hikerapi_key},
+        )
+        if media_res.status_code == 404:
+            raise HTTPException(status_code=404, detail="Reels não encontrado — confira se o link está certo e se o post é público.")
+        if media_res.status_code != 200:
+            raise HTTPException(status_code=502, detail="Erro ao buscar esse Reels.")
+
+        data = media_res.json()
+        media = data.get("response", {}).get("items", [{}])[0] if data.get("response") else data
+        media = media.get("media", media)
+
+        video_url = media.get("video_url", "")
+        if not video_url:
+            video_versions = media.get("video_versions") or []
+            if video_versions:
+                video_url = video_versions[0].get("url", "")
+        if not video_url:
+            raise HTTPException(status_code=422, detail="Esse link não parece ser de um vídeo (Reels/vídeo).")
+
+        thumb_url = media.get("thumbnail_url", "")
+        if not thumb_url:
+            image_versions = media.get("image_versions2", {}).get("candidates") or []
+            if image_versions:
+                thumb_url = image_versions[0].get("url", "")
+
+        return ReelItem(
+            media_id=str(media.get("pk", "")),
+            video_url=video_url,
+            thumbnail_url=thumb_url,
+            views=media.get("play_count", 0) or 0,
+            duration_seconds=media.get("video_duration", 0) or 0,
+        )
+
+
 class ProcessRequest(BaseModel):
     user_id: str
     video_urls: List[str]
@@ -132,14 +177,35 @@ class ProcessResponse(BaseModel):
     task_id: str
 
 
+CREDITS_PER_REEL = 25
+
+
 @router.post("/process", response_model=ProcessResponse)
 async def process_reels(req: ProcessRequest, background_tasks: BackgroundTasks):
     """Roda o processamento em lote (download + faixa/molde + marca d'água)
     em segundo plano, dentro do próprio serviço web — sem precisar de um
     worker Celery separado (economiza o custo de um serviço a mais no
-    Render, viável pra uma ferramenta de uso ocasional como essa)."""
-    from tasks.instagram_dark_tasks import run_batch_job, TASKS
+    Render, viável pra uma ferramenta de uso ocasional como essa).
+
+    Cobrança: verifica ANTES se tem saldo suficiente pro pior caso
+    (todos os selecionados dando certo), mas só debita de verdade DEPOIS
+    do processamento terminar, e só pelos que realmente baixaram com
+    sucesso — se 1 de 10 falhar, cobra 9, não 10."""
+    from db.database import get_supabase
     import uuid as _uuid
+
+    estimated_cost = len(req.video_urls) * CREDITS_PER_REEL
+
+    db = get_supabase()
+    credit_res = db.table("user_credits").select("balance").eq("user_id", req.user_id).single().execute()
+    balance = credit_res.data.get("balance", 0) if credit_res.data else 0
+    if balance < estimated_cost:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Créditos insuficientes. Saldo: {balance}, necessário (pior caso): {estimated_cost}",
+        )
+
+    from tasks.instagram_dark_tasks import run_batch_job, TASKS
 
     task_id = _uuid.uuid4().hex
     TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
