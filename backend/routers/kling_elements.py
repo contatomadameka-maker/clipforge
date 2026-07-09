@@ -10,6 +10,7 @@
 # que já está validado e funcionando.
 # ─────────────────────────────────────────────────────────────
 
+import logging
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -18,9 +19,20 @@ import httpx
 
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger("kling_fal")
 
 FAL_BASE = "https://queue.fal.run"
 KLING_MODEL = "fal-ai/kling-video/v3/pro/image-to-video"
+
+# ─────────────────────────────────────────────────────────────
+# Guarda em memória o status_url / response_url que o fal.ai
+# devolveu no POST inicial, pra NUNCA reconstruir a URL na mão.
+# Isso evita o bug de montar um path que não bate com o que o
+# fal realmente espera pra apps com subpath (ex: v3/pro/image-to-video).
+# Em produção com múltiplos workers isso devia ir pro Redis/DB,
+# mas resolve o diagnóstico e já funciona com 1 worker (WEB_CONCURRENCY=1).
+# ─────────────────────────────────────────────────────────────
+_job_urls: dict[str, dict] = {}
 
 
 class GenerateKlingRequest(BaseModel):
@@ -77,6 +89,11 @@ async def generate_kling_persona(req: GenerateKlingRequest):
             json=payload,
             headers={"Authorization": f"Key {settings.fal_api_key}"},
         )
+
+        # LOG COMPLETO — precisamos ver exatamente o que o fal.ai devolveu,
+        # incluindo status_url/response_url, pra nunca mais navegar às cegas.
+        logger.info(f"[kling] POST /generate status={res.status_code} body={res.text}")
+
         if res.status_code not in (200, 201, 202):
             raise HTTPException(status_code=502, detail=f"Erro fal.ai (Kling): {res.text}")
 
@@ -85,34 +102,80 @@ async def generate_kling_persona(req: GenerateKlingRequest):
         if not request_id:
             raise HTTPException(status_code=502, detail=f"fal.ai não retornou request_id: {data}")
 
+        # Guarda as URLs reais devolvidas pelo fal, em vez de reconstruir na mão.
+        # Se o fal não devolver esses campos (varia por modelo), cai no fallback
+        # de reconstrução — mas agora sabemos, pelo log, se isso está acontecendo.
+        status_url = data.get("status_url") or f"{FAL_BASE}/{KLING_MODEL}/requests/{request_id}/status"
+        response_url = data.get("response_url") or f"{FAL_BASE}/{KLING_MODEL}/requests/{request_id}"
+
+        _job_urls[request_id] = {
+            "status_url": status_url,
+            "response_url": response_url,
+        }
+
         return KlingResponse(task_id=request_id, status="processing")
 
 
 @router.get("/status/{task_id}")
 async def get_kling_status(task_id: str):
     """Consulta o status da geração na fila do fal.ai."""
+
+    urls = _job_urls.get(task_id)
+    if not urls:
+        # Job não está em memória (ex: backend reiniciou entre o generate e o poll).
+        # Reconstrói como fallback, mas isso É um sintoma a observar nos logs.
+        logger.warning(f"[kling] task_id {task_id} não encontrado em memória — reconstruindo URL")
+        status_url = f"{FAL_BASE}/{KLING_MODEL}/requests/{task_id}/status"
+        response_url = f"{FAL_BASE}/{KLING_MODEL}/requests/{task_id}"
+    else:
+        status_url = urls["status_url"]
+        response_url = urls["response_url"]
+
     async with httpx.AsyncClient(timeout=30) as client:
         status_res = await client.get(
-            f"{FAL_BASE}/{KLING_MODEL}/requests/{task_id}/status",
+            status_url,
             headers={"Authorization": f"Key {settings.fal_api_key}"},
         )
+
+        # LOG COMPLETO a cada poll — é isso que faltava pra saber a causa real.
+        logger.info(f"[kling] GET status task={task_id} http={status_res.status_code} body={status_res.text}")
+
         if status_res.status_code != 200:
-            return {"status": "processing", "video_url": None}
+            # ANTES: engolia o erro e devolvia "processing" pra sempre.
+            # AGORA: erro real do fal.ai vira erro real pro frontend,
+            # em vez de ficar em loop até o timeout do cliente estourar.
+            return {
+                "status": "error",
+                "error": f"fal.ai retornou HTTP {status_res.status_code} ao consultar status: {status_res.text}",
+            }
 
         status_data = status_res.json()
         fal_status = status_data.get("status", "")
 
         if fal_status == "COMPLETED":
             result_res = await client.get(
-                f"{FAL_BASE}/{KLING_MODEL}/requests/{task_id}",
+                response_url,
                 headers={"Authorization": f"Key {settings.fal_api_key}"},
             )
+            logger.info(f"[kling] GET result task={task_id} http={result_res.status_code} body={result_res.text}")
+
+            if result_res.status_code != 200:
+                return {
+                    "status": "error",
+                    "error": f"fal.ai retornou HTTP {result_res.status_code} ao buscar resultado: {result_res.text}",
+                }
+
             result_data = result_res.json()
             video_url = result_data.get("video", {}).get("url", "")
+            if not video_url:
+                return {
+                    "status": "error",
+                    "error": f"fal.ai marcou como COMPLETED mas não veio video.url: {result_data}",
+                }
             return {"status": "done", "video_url": video_url}
 
         if fal_status in ("ERROR", "FAILED"):
-            return {"status": "error", "error": status_data.get("error", "Erro desconhecido no fal.ai")}
+            return {"status": "error", "error": status_data.get("error", f"Erro no fal.ai: {status_data}")}
 
-        # IN_QUEUE, IN_PROGRESS, etc.
-        return {"status": "processing", "video_url": None}
+        # IN_QUEUE, IN_PROGRESS, etc. — status real e válido, segue esperando.
+        return {"status": "processing", "queue_status": fal_status, "video_url": None}
