@@ -162,5 +162,9 @@ async def get_status(task_id: str):
 
     task = TASKS.get(task_id)
     if not task:
-        return {"status": "processing", "progress": 0}
+        # Task não encontrada — normalmente significa que o servidor
+        # reiniciou (deploy novo, por exemplo) no meio do processamento
+        # e perdeu o estado em memória. Antes isso ficava reportando
+        # "processing" pra sempre; agora avisa que precisa tentar de novo.
+        return {"status": "error", "progress": 0, "error": "Processamento perdido (o servidor pode ter reiniciado no meio do caminho). Tente processar de novo."}
     return task
