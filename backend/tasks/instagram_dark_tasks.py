@@ -1,283 +1,194 @@
-"use client";
+# ─────────────────────────────────────────────────────────────
+# backend/tasks/instagram_dark_tasks.py
+# Processamento em lote — baixa os reels, prende a capa, aplica
+# marca d'água, sobe pro R2.
+#
+# SEM CELERY DE PROPÓSITO: roda via BackgroundTasks do próprio
+# FastAPI, dentro do mesmo serviço web já existente — evita precisar
+# de um worker novo (que custaria mais $7/mês no Render) pra uma
+# ferramenta de uso ocasional como essa.
+#
+# Limitação aceita: o progresso fica em memória (dict global). Se o
+# serviço reiniciar no meio de um processamento, essa tarefa se perde.
+# Pra escala maior no futuro, migrar pra Celery valeria a pena.
+#
+# Requer FFmpeg instalado no ambiente do Render.
+# ─────────────────────────────────────────────────────────────
 
-// frontend/app/instagram-dark/page.tsx
-// Instagram Dark — lista Reels de um perfil, baixa os selecionados
-// e aplica capa nova + marca d'água em lote.
+import os
+import subprocess
+import tempfile
+import uuid
+import boto3
+import httpx
 
-import { useState, useRef } from "react";
-import { getSupabase } from "@/lib/supabase";
+from config import get_settings
 
-const API = "https://clipforge-6yzz.onrender.com";
+settings = get_settings()
 
-interface ReelItem {
-  media_id: string;
-  video_url: string;
-  thumbnail_url: string;
-  views: number;
-  duration_seconds: number;
-}
+# Guarda o progresso/resultado de cada tarefa em memória, por task_id
+TASKS: dict = {}
 
-export default function InstagramDarkPage() {
-  const [profileInput, setProfileInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [nextMaxId, setNextMaxId] = useState<string | null>(null);
-  const [reels, setReels] = useState<ReelItem[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [error, setError] = useState<string | null>(null);
 
-  const [barText, setBarText] = useState("");
-  const [barColor, setBarColor] = useState("#7c6df5");
-  const [textColor, setTextColor] = useState("#ffffff");
-  const [watermarkUrl, setWatermarkUrl] = useState("");
-  const [processing, setProcessing] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [results, setResults] = useState<{ original_url: string; final_url?: string; status: string; error?: string }[]>([]);
+def _r2_client():
+    return boto3.client(
+        "s3",
+        endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
+        aws_access_key_id=settings.r2_access_key_id,
+        aws_secret_access_key=settings.r2_secret_access_key,
+    )
 
-  const watermarkFileRef = useRef<HTMLInputElement>(null);
 
-  async function uploadFile(file: File, onDone: (url: string) => void) {
-    const fd = new FormData();
-    fd.append("file", file);
-    const res = await fetch(`${API}/storage/upload/product-image`, { method: "POST", body: fd });
-    const data = await res.json();
-    onDone(data.url);
-  }
+def _download(url: str, dest_path: str):
+    with httpx.stream("GET", url, timeout=60, follow_redirects=True) as r:
+        r.raise_for_status()
+        with open(dest_path, "wb") as f:
+            for chunk in r.iter_bytes():
+                f.write(chunk)
 
-  async function searchReels(cursor: string | null = null) {
-    if (!profileInput.trim()) return;
-    const append = !!cursor;
-    if (append) setLoadingMore(true); else setLoading(true);
-    setError(null);
-    if (!append) { setReels([]); setSelected(new Set()); setNextMaxId(null); }
-    try {
-      let url = `${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}`;
-      if (cursor) url += `&max_id=${encodeURIComponent(cursor)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || "Erro ao buscar Reels desse perfil");
-      }
-      const data = await res.json();
-      setReels(prev => append ? [...prev, ...data.reels] : data.reels);
-      setNextMaxId(data.next_max_id);
-    } catch (e: any) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
-      setLoadingMore(false);
-    }
-  }
 
-  function toggleSelect(id: string) {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
+def _upload_to_r2(local_path: str, key: str) -> str:
+    client = _r2_client()
+    client.upload_file(local_path, settings.r2_bucket_name, key)
+    return f"{settings.r2_public_url}/{key}"
 
-  async function startProcessing() {
-    if (selected.size === 0) { alert("Selecione ao menos 1 Reel!"); return; }
 
-    let userId = "";
-    try {
-      const sb = getSupabase();
-      const { data } = await sb.auth.getUser();
-      userId = data?.user?.id || "";
-    } catch {}
-    if (!userId) { alert("Faça login novamente."); return; }
+# Fonte usada na faixa — precisa existir no ambiente do Render (pacote
+# fonts-dejavu-core, comum em imagens Debian/Ubuntu, mas não é garantido
+# em toda imagem Python do Render — validar depois do primeiro teste).
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 
-    const selectedUrls = reels.filter(r => selected.has(r.media_id)).map(r => r.video_url);
+BAR_HEIGHT = 130  # px, altura fixa da faixa no topo
 
-    setProcessing(true);
-    setProgress(0);
-    setResults([]);
 
-    try {
-      const res = await fetch(`${API}/instagram-dark/process`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          user_id: userId,
-          video_urls: selectedUrls,
-          bar_text: barText || null,
-          bar_color: barColor,
-          text_color: textColor,
-          watermark_image_url: watermarkUrl || null,
-        }),
-      });
-      const data = await res.json();
-      const taskId = data.task_id;
+def _escape_ffmpeg_text(text: str) -> str:
+    """Escapa caracteres especiais pro filtro drawtext do FFmpeg."""
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
 
-      let attempts = 0;
-      const poll = setInterval(async () => {
-        attempts++;
-        const statusRes = await fetch(`${API}/instagram-dark/status/${taskId}`);
-        const statusData = await statusRes.json();
-        setProgress(statusData.progress || 0);
 
-        if (statusData.status === "done") {
-          clearInterval(poll);
-          setResults(statusData.videos || []);
-          setProcessing(false);
-        } else if (statusData.status === "error" || attempts > 120) {
-          clearInterval(poll);
-          setError(statusData.error || "Timeout no processamento");
-          setProcessing(false);
-        }
-      }, 5000);
-    } catch (e: any) {
-      setError(e.message);
-      setProcessing(false);
-    }
-  }
+def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | None, text_color: str | None, watermark_path: str | None, workdir: str) -> str:
+    """Baixa 1 reel, opcionalmente adiciona uma faixa no topo (molde com
+    texto customizado) e/ou marca d'água, retorna o caminho local do
+    arquivo final. A faixa NÃO encolhe o vídeo — ela é somada acima,
+    deixando a tela final mais alta, pra garantir que nada do vídeo
+    original seja cortado."""
+    uid = uuid.uuid4().hex[:8]
+    raw_path = os.path.join(workdir, f"raw_{uid}.mp4")
+    barred_path = os.path.join(workdir, f"barred_{uid}.mp4")
+    final_path = os.path.join(workdir, f"final_{uid}.mp4")
 
-  return (
-    <div className="min-h-screen p-6" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
-      <div className="max-w-4xl mx-auto flex flex-col gap-6">
+    _download(video_url, raw_path)
 
-        <div>
-          <h1 className="text-xl font-bold mb-1">🌙 Instagram Dark</h1>
-          <p className="text-sm text-[#9090a8]">Baixe Reels de um perfil e monte com capa + marca d'água nova.</p>
-        </div>
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=width,height", "-of", "csv=p=0", raw_path],
+        capture_output=True, text=True,
+    )
+    try:
+        orig_width, orig_height = [int(x) for x in probe.stdout.strip().split(",")]
+    except Exception:
+        orig_width, orig_height = 1080, 1920
 
-        {/* Aviso de uso — regra de "sem rosto" */}
-        <div className="rounded-xl p-4" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.25)" }}>
-          <p className="text-sm font-semibold mb-1" style={{ color: "#f59e0b" }}>⚠️ Antes de usar, leia:</p>
-          <p className="text-xs leading-relaxed" style={{ color: "#d4a45a" }}>
-            <strong>Não baixe vídeos com rosto de outras pessoas</strong> — isso viola direito de imagem. Use essa ferramenta apenas com vídeos sem pessoas identificáveis (produtos, paisagens, animais, texto). O vídeo baixado continua sendo trabalho autoral de quem criou — você assume a responsabilidade pelo uso que fizer do conteúdo.
-          </p>
-        </div>
+    # Limita a LARGURA de processamento — reduz o consumo de memória do
+    # FFmpeg, essencial num plano com pouca RAM. A altura do vídeo se
+    # ajusta proporcionalmente (mantém a proporção original, sem cortar).
+    MAX_WIDTH = 720
+    if orig_width > MAX_WIDTH:
+        target_width = MAX_WIDTH
+        target_height = int(orig_height * (MAX_WIDTH / orig_width)) // 2 * 2
+    else:
+        target_width, target_height = orig_width // 2 * 2, orig_height // 2 * 2
 
-        {/* Busca de perfil */}
-        <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-          <label className="text-xs font-medium text-[#9090a8] block mb-2">Link ou @usuário do perfil</label>
-          <div className="flex gap-2">
-            <input type="text" value={profileInput} onChange={e => setProfileInput(e.target.value)}
-              placeholder="https://instagram.com/perfil ou @perfil"
-              onKeyDown={e => e.key === "Enter" && searchReels()}
-              className="flex-1 h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
-              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-            <button type="button" onClick={() => searchReels()} disabled={loading}
-              className="px-5 h-11 rounded-[8px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
-              style={{ background: "#7c6df5", color: "#fff" }}>
-              {loading ? "Buscando..." : "Buscar"}
-            </button>
-          </div>
-          {error && <p className="text-xs text-[#f87171] mt-2">{error}</p>}
-        </div>
+    base_path = raw_path
+    if bar_text or bar_color:
+        color = (bar_color or "#7c6df5").lstrip("#")
+        txt_color = (text_color or "#ffffff").lstrip("#")
+        text = _escape_ffmpeg_text(bar_text or "")
 
-        {/* Grid de reels */}
-        {reels.length > 0 && (
-          <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <p className="text-xs font-medium text-[#9090a8] mb-3">{reels.length} Reels encontrados — {selected.size} selecionados</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {reels.map(reel => (
-                <div key={reel.media_id} onClick={() => toggleSelect(reel.media_id)}
-                  className="relative rounded-xl overflow-hidden cursor-pointer"
-                  style={{ aspectRatio: "9/16", border: selected.has(reel.media_id) ? "2px solid #7c6df5" : "1px solid rgba(255,255,255,0.1)" }}>
-                  <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
-                  <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
-                    style={{ background: selected.has(reel.media_id) ? "#7c6df5" : "rgba(0,0,0,0.5)" }}>
-                    {selected.has(reel.media_id) && <span className="text-white text-xs">✓</span>}
-                  </div>
-                  <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] text-white" style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}>
-                    👁 {reel.views.toLocaleString()} · {Math.round(reel.duration_seconds)}s
-                  </div>
-                </div>
-              ))}
-            </div>
-            {nextMaxId && (
-              <button type="button" onClick={() => searchReels(nextMaxId)} disabled={loadingMore}
-                className="w-full mt-4 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
-                style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
-                {loadingMore ? "Carregando..." : "Carregar mais Reels"}
-              </button>
-            )}
-          </div>
-        )}
+        # Faixa colorida do tamanho da largura do vídeo + texto centralizado,
+        # empilhada ACIMA do vídeo (escalado só na largura) via vstack —
+        # a altura final da tela cresce (barra + vídeo), nada é cortado.
+        # IMPORTANTE: a faixa (color source) não tem duração fixa aqui —
+        # fica "infinita" de propósito, e o -shortest no final corta ela
+        # no mesmo tamanho do vídeo real. Antes eu tinha colocado d=1s
+        # fixo, o que travava o FFmpeg pra sempre tentando casar uma
+        # faixa de 1s com um vídeo de 10s+ no vstack.
+        filter_complex = (
+            f"color=c=0x{color}:s={target_width}x{BAR_HEIGHT},"
+            f"drawtext=fontfile={FONT_PATH}:text='{text}':fontcolor=0x{txt_color}:fontsize=40:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2[bar];"
+            f"[0:v]scale={target_width}:{target_height}[vid];"
+            f"[bar][vid]vstack=inputs=2[vout]"
+        )
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", raw_path,
+            "-filter_complex", filter_complex,
+            "-map", "[vout]", "-map", "0:a?",
+            "-shortest",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            barred_path,
+        ], check=True, capture_output=True, timeout=120)
+        base_path = barred_path
+    elif target_width != orig_width:
+        # Sem faixa, mas ainda precisa reduzir resolução
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", raw_path,
+            "-vf", f"scale={target_width}:{target_height}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            barred_path,
+        ], check=True, capture_output=True, timeout=120)
+        base_path = barred_path
 
-        {/* Faixa (molde) + marca d'água */}
-        {reels.length > 0 && (
-          <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Faixa no topo (opcional — nome do canal ou tema)</label>
-              <input type="text" value={barText} onChange={e => setBarText(e.target.value)}
-                placeholder="Ex: Reflexões Diárias"
-                className="w-full h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a] mb-3"
-                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor da faixa</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={barColor} onChange={e => setBarColor(e.target.value)}
-                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                    <span className="text-xs text-[#9090a8]">{barColor}</span>
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor do texto</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={textColor} onChange={e => setTextColor(e.target.value)}
-                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                    <span className="text-xs text-[#9090a8]">{textColor}</span>
-                  </div>
-                </div>
-              </div>
-              {barText && (
-                <div className="mt-3 h-12 rounded-[8px] flex items-center justify-center text-sm font-bold"
-                  style={{ background: barColor, color: textColor }}>
-                  {barText}
-                </div>
-              )}
-              <p className="text-[10px] text-[#55556a] mt-2">A faixa é adicionada acima do vídeo — o vídeo original não é cortado, a tela final fica um pouco mais alta.</p>
-            </div>
+    if watermark_path:
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", base_path, "-i", watermark_path,
+            "-filter_complex", "overlay=W-w-24:H-h-24",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
+            final_path,
+        ], check=True, capture_output=True, timeout=120)
+    else:
+        final_path = base_path
 
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Marca d'água (opcional — canto inferior direito, o vídeo todo)</label>
-              <div onClick={() => watermarkFileRef.current?.click()}
-                className="flex items-center gap-3 px-4 py-3 rounded-[8px] cursor-pointer"
-                style={{ background: "rgba(62,207,142,0.05)", border: "0.5px dashed rgba(62,207,142,0.3)" }}>
-                {watermarkUrl ? <img src={watermarkUrl} className="w-10 h-10 rounded object-cover" alt="" /> : <span>💧</span>}
-                <span className="text-xs text-[#9090a8]">{watermarkUrl ? "Marca d'água enviada — clique pra trocar" : "Enviar marca d'água (PNG transparente)"}</span>
-              </div>
-              <input ref={watermarkFileRef} type="file" accept="image/png" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setWatermarkUrl); }} />
-            </div>
+    return final_path
 
-            <button type="button" onClick={startProcessing} disabled={processing}
-              className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
-              style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
-              {processing ? `Processando... ${progress}%` : `Processar ${selected.size} Reel${selected.size !== 1 ? "s" : ""}`}
-            </button>
-          </div>
-        )}
 
-        {/* Resultados */}
-        {results.length > 0 && (
-          <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <p className="text-sm font-semibold mb-3">Resultado</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {results.map((r, i) => (
-                <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
-                  {r.status === "done" && r.final_url ? (
-                    <>
-                      <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
-                      <a href={r.final_url} download className="block text-center py-2 text-xs no-underline" style={{ color: "#3ecf8e" }}>⬇️ Baixar</a>
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
-                      <span className="text-xs text-[#f87171] font-medium">❌ Falhou</span>
-                      {r.error && <p className="text-[10px] text-[#9090a8] text-center leading-relaxed line-clamp-6">{r.error}</p>}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+def run_batch_job(task_id: str, user_id: str, video_urls: list, bar_text: str | None = None, bar_color: str | None = None, text_color: str | None = None, watermark_image_url: str | None = None):
+    """Chamada pelo BackgroundTasks do FastAPI — roda de verdade o
+    processamento, atualizando TASKS[task_id] conforme avança."""
+    TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
+    results = []
+    total = len(video_urls)
+
+    try:
+        with tempfile.TemporaryDirectory() as workdir:
+            watermark_path = None
+            if watermark_image_url:
+                watermark_path = os.path.join(workdir, "watermark.png")
+                _download(watermark_image_url, watermark_path)
+
+            for i, video_url in enumerate(video_urls):
+                TASKS[task_id]["progress"] = int((i / total) * 100)
+                try:
+                    final_local_path = _process_one_video(video_url, bar_text, bar_color, text_color, watermark_path, workdir)
+                    key = f"instagram-dark/{user_id}/{uuid.uuid4().hex}.mp4"
+                    final_url = _upload_to_r2(final_local_path, key)
+                    results.append({"original_url": video_url, "final_url": final_url, "status": "done"})
+                except subprocess.CalledProcessError as e:
+                    # str(e) sozinho só mostra "returned exit status 1", sem
+                    # dizer o motivo real — o stderr do FFmpeg tem a mensagem
+                    # de verdade (ex: fonte não encontrada, filtro inválido)
+                    stderr_msg = e.stderr.decode("utf-8", errors="replace")[-500:] if e.stderr else "sem detalhes"
+                    error_msg = f"FFmpeg falhou: {stderr_msg}"
+                    print(f"[instagram-dark] ERRO ao processar {video_url}: {error_msg}")
+                    results.append({"original_url": video_url, "status": "error", "error": error_msg})
+                except Exception as e:
+                    print(f"[instagram-dark] ERRO ao processar {video_url}: {e}")
+                    results.append({"original_url": video_url, "status": "error", "error": str(e)})
+
+        TASKS[task_id] = {"status": "done", "progress": 100, "videos": results}
+    except Exception as e:
+        print(f"[instagram-dark] ERRO GERAL na task {task_id}: {e}")
+        TASKS[task_id] = {"status": "error", "progress": 0, "error": str(e)}
