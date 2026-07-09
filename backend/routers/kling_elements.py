@@ -72,11 +72,26 @@ async def generate_kling_persona(req: GenerateKlingRequest):
 
     prompt = _build_kling_prompt(req)
 
-    elements = [{"frontal_image_url": req.persona_image_url}]
+    # Cada elemento precisa de frontal_image_url JUNTO com reference_image_urls
+    # (ou, alternativamente, video_url) — o fal.ai rejeita frontal_image_url sozinho.
+    # Como hoje só temos 1 foto por persona/produto, usamos a mesma imagem como
+    # referência também. Quando tivermos múltiplos ângulos salvos, é só trocar
+    # esse "[imagem]" por uma lista real de fotos adicionais.
+    elements = [{
+        "frontal_image_url": req.persona_image_url,
+        "reference_image_urls": [req.persona_image_url],
+    }]
     if req.product_image_url:
-        elements.append({"frontal_image_url": req.product_image_url})
+        elements.append({
+            "frontal_image_url": req.product_image_url,
+            "reference_image_urls": [req.product_image_url],
+        })
 
     payload = {
+        # Campo obrigatório no nível raiz — é o frame inicial do vídeo,
+        # separado dos "elements" (que servem só pra manter identidade consistente).
+        # Usamos a foto da persona como ponto de partida.
+        "start_image_url": req.persona_image_url,
         "prompt": prompt,
         "elements": elements,
         "duration": req.duration,
