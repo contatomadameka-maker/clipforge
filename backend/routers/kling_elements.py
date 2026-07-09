@@ -155,9 +155,10 @@ async def get_kling_status(task_id: str):
         # LOG COMPLETO a cada poll — é isso que faltava pra saber a causa real.
         logger.info(f"[kling] GET status task={task_id} http={status_res.status_code} body={status_res.text}")
 
-        if status_res.status_code != 200:
-            # ANTES: engolia o erro e devolvia "processing" pra sempre.
-            # AGORA: erro real do fal.ai vira erro real pro frontend,
+        # fal.ai usa 202 pra "aceito, ainda processando" (IN_QUEUE/IN_PROGRESS)
+        # e 200 quando já tem um status definitivo — os dois são respostas válidas.
+        if status_res.status_code not in (200, 202):
+            # Erro real do fal.ai vira erro real pro frontend,
             # em vez de ficar em loop até o timeout do cliente estourar.
             return {
                 "status": "error",
