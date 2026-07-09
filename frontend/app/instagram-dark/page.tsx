@@ -20,6 +20,8 @@ interface ReelItem {
 export default function InstagramDarkPage() {
   const [profileInput, setProfileInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [currentCount, setCurrentCount] = useState(24);
   const [reels, setReels] = useState<ReelItem[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
@@ -41,24 +43,25 @@ export default function InstagramDarkPage() {
     onDone(data.url);
   }
 
-  async function searchReels() {
+  async function searchReels(count: number = 24, append: boolean = false) {
     if (!profileInput.trim()) return;
-    setLoading(true);
+    if (append) setLoadingMore(true); else setLoading(true);
     setError(null);
-    setReels([]);
-    setSelected(new Set());
+    if (!append) { setReels([]); setSelected(new Set()); }
     try {
-      const res = await fetch(`${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}`);
+      const res = await fetch(`${API}/instagram-dark/list-reels?profile=${encodeURIComponent(profileInput.trim())}&count=${count}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao buscar Reels desse perfil");
       }
       const data = await res.json();
       setReels(data);
+      setCurrentCount(count);
     } catch (e: any) {
       setError(e.message);
     } finally {
       setLoading(false);
+      setLoadingMore(false);
     }
   }
 
@@ -73,7 +76,6 @@ export default function InstagramDarkPage() {
 
   async function startProcessing() {
     if (selected.size === 0) { alert("Selecione ao menos 1 Reel!"); return; }
-    if (!coverUrl) { alert("Envie a imagem de capa primeiro!"); return; }
 
     let userId = "";
     try {
@@ -96,7 +98,7 @@ export default function InstagramDarkPage() {
         body: JSON.stringify({
           user_id: userId,
           video_urls: selectedUrls,
-          cover_image_url: coverUrl,
+          cover_image_url: coverUrl || null,
           watermark_image_url: watermarkUrl || null,
         }),
       });
@@ -152,7 +154,7 @@ export default function InstagramDarkPage() {
               onKeyDown={e => e.key === "Enter" && searchReels()}
               className="flex-1 h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-            <button type="button" onClick={searchReels} disabled={loading}
+            <button type="button" onClick={() => searchReels()} disabled={loading}
               className="px-5 h-11 rounded-[8px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
               style={{ background: "#7c6df5", color: "#fff" }}>
               {loading ? "Buscando..." : "Buscar"}
@@ -181,6 +183,13 @@ export default function InstagramDarkPage() {
                 </div>
               ))}
             </div>
+            {reels.length >= currentCount && (
+              <button type="button" onClick={() => searchReels(currentCount + 24, true)} disabled={loadingMore}
+                className="w-full mt-4 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
+                style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+                {loadingMore ? "Carregando..." : "Carregar mais Reels"}
+              </button>
+            )}
           </div>
         )}
 
@@ -188,7 +197,7 @@ export default function InstagramDarkPage() {
         {reels.length > 0 && (
           <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Capa nova (aparece no início de cada vídeo, 2s)</label>
+              <label className="text-xs font-medium text-[#9090a8] block mb-2">Capa nova (opcional — em breve, outro formato)</label>
               <div onClick={() => coverFileRef.current?.click()}
                 className="flex items-center gap-3 px-4 py-3 rounded-[8px] cursor-pointer"
                 style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
