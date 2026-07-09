@@ -682,16 +682,22 @@ export default function InstagramDarkPage() {
                       <video
                         key={effectivePreviewUrl}
                         src={effectivePreviewUrl}
+                        autoPlay
+                        loop
                         muted
                         playsInline
-                        preload="auto"
-                        onLoadedMetadata={e => { (e.currentTarget as HTMLVideoElement).currentTime = 0.1; }}
-                        className="absolute"
+                        controls
+                        className="absolute inset-0 w-full h-full object-contain"
                         style={{
-                          width: `${zoom}%`, height: `${zoom}%`,
-                          top: `${posY}%`, left: `${posX}%`,
-                          transform: "translate(-50%,-50%)",
-                          objectFit: "contain",
+                          // Corta visualmente o topo/rodapé do vídeo ORIGINAL,
+                          // igual ao que o FFmpeg faz de verdade no backend.
+                          clipPath: `inset(${fillTop}% 0 ${fillBottom}% 0)`,
+                          // Zoom via transform:scale — diferente de mexer em
+                          // width/height em %, isso funciona igual pra cima
+                          // (>100%) e pra baixo (<100%). Posição desloca o
+                          // enquadramento dentro da área com zoom aplicado.
+                          transform: `translate(${(50 - posX) * 0.6}%, ${(50 - posY) * 0.6}%) scale(${zoom / 100})`,
+                          transformOrigin: "center center",
                         }}
                       />
                     ) : (
