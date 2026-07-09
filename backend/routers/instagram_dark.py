@@ -87,6 +87,7 @@ async def list_reels(profile: str, max_id: Optional[str] = None):
 
         items = reels_res.json()
         result = []
+        last_raw_id = None
         for media in items:
             video_url = media.get("video_url", "")
             if not video_url:
@@ -108,10 +109,13 @@ async def list_reels(profile: str, max_id: Optional[str] = None):
                     views=media.get("play_count", 0) or 0,
                     duration_seconds=media.get("video_duration", 0) or 0,
                 ))
+                # Guarda o "id" composto (formato "pk_userid") do último
+                # item — é esse formato que serve de cursor de paginação
+                # nesse tipo de API, não o "pk" sozinho (tentativa anterior
+                # que estava fazendo a página repetir sempre os mesmos 12).
+                last_raw_id = media.get("id") or media.get("pk")
 
-        # O cursor pra próxima página é o pk do último item dessa página —
-        # padrão comum de paginação por cursor em APIs desse tipo.
-        next_max_id = result[-1].media_id if result else None
+        next_max_id = str(last_raw_id) if last_raw_id else None
 
         print(f"[instagram-dark] página com {len(result)} reels, next_max_id={next_max_id}")
         return ListReelsResponse(reels=result, next_max_id=next_max_id)
