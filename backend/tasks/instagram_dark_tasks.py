@@ -21,6 +21,7 @@ import tempfile
 import uuid
 import boto3
 import httpx
+from PIL import Image, ImageDraw, ImageFont
 
 from config import get_settings
 
@@ -61,9 +62,23 @@ FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
 BAR_HEIGHT = 130  # px, altura fixa da faixa no topo
 
 
-def _escape_ffmpeg_text(text: str) -> str:
-    """Escapa caracteres especiais pro filtro drawtext do FFmpeg."""
-    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
+def _hex_to_rgb(hex_color: str) -> tuple:
+    h = hex_color.lstrip("#")
+    return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
+
+
+def _generate_bar_image(text: str, color_hex: str, text_color_hex: str, width: int, height: int, path: str):
+    """Gera a faixa (cor sólida + texto centralizado) como PNG usando
+    Pillow — muito mais rápido que o filtro drawtext do FFmpeg, que
+    precisa renderizar a fonte em cada frame (chegou a estourar 120s
+    de timeout numa faixa só de 1 vídeo)."""
+    img = Image.new("RGB", (width, height), _hex_to_rgb(color_hex))
+    draw = ImageDraw.Draw(img)
+    font = ImageFont.truetype(FONT_PATH, 40)
+    bbox = draw.textbbox((0, 0), text, font=font)
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((width - text_w) / 2, (height - text_h) / 2 - bbox[1]), text, font=font, fill=_hex_to_rgb(text_color_hex))
+    img.save(path, "PNG")
 
 
 def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | None, text_color: str | None, watermark_path: str | None, workdir: str) -> str:
@@ -74,6 +89,7 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
     original seja cortado."""
     uid = uuid.uuid4().hex[:8]
     raw_path = os.path.join(workdir, f"raw_{uid}.mp4")
+    bar_img_path = os.path.join(workdir, f"bar_{uid}.png")
     barred_path = os.path.join(workdir, f"barred_{uid}.mp4")
     final_path = os.path.join(workdir, f"final_{uid}.mp4")
 
@@ -101,30 +117,22 @@ def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | No
 
     base_path = raw_path
     if bar_text or bar_color:
-        color = (bar_color or "#7c6df5").lstrip("#")
-        txt_color = (text_color or "#ffffff").lstrip("#")
-        text = _escape_ffmpeg_text(bar_text or "")
+        # Gera a faixa como PNG pronto (Pillow, quase instantâneo) — o
+        # FFmpeg só precisa empilhar essa imagem já pronta com o vídeo,
+        # sem precisar renderizar fonte frame a frame (era isso que
+        # estava estourando o timeout de 120s antes).
+        _generate_bar_image(bar_text or "", bar_color or "#7c6df5", text_color or "#ffffff", target_width, BAR_HEIGHT, bar_img_path)
 
-        # Faixa colorida do tamanho da largura do vídeo + texto centralizado,
-        # empilhada ACIMA do vídeo (escalado só na largura) via vstack —
-        # a altura final da tela cresce (barra + vídeo), nada é cortado.
-        # IMPORTANTE: a faixa (color source) não tem duração fixa aqui —
-        # fica "infinita" de propósito, e o -shortest no final corta ela
-        # no mesmo tamanho do vídeo real. Antes eu tinha colocado d=1s
-        # fixo, o que travava o FFmpeg pra sempre tentando casar uma
-        # faixa de 1s com um vídeo de 10s+ no vstack.
         filter_complex = (
-            f"color=c=0x{color}:s={target_width}x{BAR_HEIGHT},"
-            f"drawtext=fontfile={FONT_PATH}:text='{text}':fontcolor=0x{txt_color}:fontsize=40:"
-            f"x=(w-text_w)/2:y=(h-text_h)/2[bar];"
-            f"[0:v]scale={target_width}:{target_height}[vid];"
-            f"[bar][vid]vstack=inputs=2[vout]"
+            f"[1:v]scale={target_width}:{target_height}[vid];"
+            f"[0:v][vid]vstack=inputs=2[vout]"
         )
         subprocess.run([
             "ffmpeg", "-y", "-threads", "1",
+            "-loop", "1", "-i", bar_img_path,
             "-i", raw_path,
             "-filter_complex", filter_complex,
-            "-map", "[vout]", "-map", "0:a?",
+            "-map", "[vout]", "-map", "1:a?",
             "-shortest",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
             barred_path,
