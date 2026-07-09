@@ -53,16 +53,28 @@ def _upload_to_r2(local_path: str, key: str) -> str:
     return f"{settings.r2_public_url}/{key}"
 
 
-def _process_one_video(video_url: str, cover_path: str | None, watermark_path: str | None, workdir: str) -> str:
-    """Baixa 1 reel, opcionalmente prende a capa no início, opcionalmente
-    aplica marca d'água, retorna o caminho local do arquivo final pronto
-    pra subir. Capa e marca d'água são independentes — qualquer uma pode
-    faltar."""
+# Fonte usada na faixa — precisa existir no ambiente do Render (pacote
+# fonts-dejavu-core, comum em imagens Debian/Ubuntu, mas não é garantido
+# em toda imagem Python do Render — validar depois do primeiro teste).
+FONT_PATH = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+
+BAR_HEIGHT = 130  # px, altura fixa da faixa no topo
+
+
+def _escape_ffmpeg_text(text: str) -> str:
+    """Escapa caracteres especiais pro filtro drawtext do FFmpeg."""
+    return text.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace("%", "\\%")
+
+
+def _process_one_video(video_url: str, bar_text: str | None, bar_color: str | None, text_color: str | None, watermark_path: str | None, workdir: str) -> str:
+    """Baixa 1 reel, opcionalmente adiciona uma faixa no topo (molde com
+    texto customizado) e/ou marca d'água, retorna o caminho local do
+    arquivo final. A faixa NÃO encolhe o vídeo — ela é somada acima,
+    deixando a tela final mais alta, pra garantir que nada do vídeo
+    original seja cortado."""
     uid = uuid.uuid4().hex[:8]
     raw_path = os.path.join(workdir, f"raw_{uid}.mp4")
-    intro_path = os.path.join(workdir, f"intro_{uid}.mp4")
-    scaled_path = os.path.join(workdir, f"scaled_{uid}.mp4")
-    concat_path = os.path.join(workdir, f"concat_{uid}.mp4")
+    barred_path = os.path.join(workdir, f"barred_{uid}.mp4")
     final_path = os.path.join(workdir, f"final_{uid}.mp4")
 
     _download(video_url, raw_path)
@@ -77,52 +89,51 @@ def _process_one_video(video_url: str, cover_path: str | None, watermark_path: s
     except Exception:
         orig_width, orig_height = 1080, 1920
 
-    # Limita a resolução de processamento — reduz bastante o consumo de
-    # memória do FFmpeg, essencial num plano com pouca RAM. 720px de
-    # largura já fica ótimo pra Reels/Stories, não precisa da resolução
-    # nativa (que costuma ser 1080x1920 ou maior).
+    # Limita a LARGURA de processamento — reduz o consumo de memória do
+    # FFmpeg, essencial num plano com pouca RAM. A altura do vídeo se
+    # ajusta proporcionalmente (mantém a proporção original, sem cortar).
     MAX_WIDTH = 720
     if orig_width > MAX_WIDTH:
-        scale = MAX_WIDTH / orig_width
-        width, height = MAX_WIDTH, int(orig_height * scale) // 2 * 2  # precisa ser par
+        target_width = MAX_WIDTH
+        target_height = int(orig_height * (MAX_WIDTH / orig_width)) // 2 * 2
     else:
-        width, height = orig_width, orig_height
+        target_width, target_height = orig_width // 2 * 2, orig_height // 2 * 2
 
-    scale_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
+    base_path = raw_path
+    if bar_text or bar_color:
+        color = (bar_color or "#7c6df5").lstrip("#")
+        txt_color = (text_color or "#ffffff").lstrip("#")
+        text = _escape_ffmpeg_text(bar_text or "")
 
-    if cover_path:
-        # Cria o clipe de intro a partir da capa e concatena com o reel
-        subprocess.run([
-            "ffmpeg", "-y", "-threads", "1",
-            "-loop", "1", "-i", cover_path,
-            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-            "-t", "2",
-            "-vf", f"{scale_filter},fps=30",
-            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-pix_fmt", "yuv420p",
-            "-shortest", intro_path,
-        ], check=True, capture_output=True)
-
-        subprocess.run([
-            "ffmpeg", "-y", "-threads", "1",
-            "-i", intro_path, "-i", raw_path,
-            "-filter_complex",
-            f"[1:v:0]{scale_filter}[reelv];"
-            f"[0:v:0][0:a:0][reelv][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
-            "-map", "[outv]", "-map", "[outa]",
-            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
-            concat_path,
-        ], check=True, capture_output=True)
-        base_path = concat_path
-    else:
-        # Sem capa — só reduz a resolução do reel baixado, sem concatenar nada
+        # Faixa colorida do tamanho da largura do vídeo + texto centralizado,
+        # empilhada ACIMA do vídeo (escalado só na largura) via vstack —
+        # a altura final da tela cresce (barra + vídeo), nada é cortado.
+        filter_complex = (
+            f"color=c=0x{color}:s={target_width}x{BAR_HEIGHT}:d=1,"
+            f"drawtext=fontfile={FONT_PATH}:text='{text}':fontcolor=0x{txt_color}:fontsize=40:"
+            f"x=(w-text_w)/2:y=(h-text_h)/2[bar];"
+            f"[0:v]scale={target_width}:{target_height}[vid];"
+            f"[bar][vid]vstack=inputs=2[vout]"
+        )
         subprocess.run([
             "ffmpeg", "-y", "-threads", "1",
             "-i", raw_path,
-            "-vf", scale_filter,
+            "-filter_complex", filter_complex,
+            "-map", "[vout]", "-map", "0:a?",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
-            scaled_path,
+            barred_path,
         ], check=True, capture_output=True)
-        base_path = scaled_path
+        base_path = barred_path
+    elif target_width != orig_width:
+        # Sem faixa, mas ainda precisa reduzir resolução
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", raw_path,
+            "-vf", f"scale={target_width}:{target_height}",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            barred_path,
+        ], check=True, capture_output=True)
+        base_path = barred_path
 
     if watermark_path:
         subprocess.run([
@@ -138,7 +149,7 @@ def _process_one_video(video_url: str, cover_path: str | None, watermark_path: s
     return final_path
 
 
-def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url: str | None = None, watermark_image_url: str | None = None):
+def run_batch_job(task_id: str, user_id: str, video_urls: list, bar_text: str | None = None, bar_color: str | None = None, text_color: str | None = None, watermark_image_url: str | None = None):
     """Chamada pelo BackgroundTasks do FastAPI — roda de verdade o
     processamento, atualizando TASKS[task_id] conforme avança."""
     TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
@@ -147,11 +158,6 @@ def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url:
 
     try:
         with tempfile.TemporaryDirectory() as workdir:
-            cover_path = None
-            if cover_image_url:
-                cover_path = os.path.join(workdir, "cover.jpg")
-                _download(cover_image_url, cover_path)
-
             watermark_path = None
             if watermark_image_url:
                 watermark_path = os.path.join(workdir, "watermark.png")
@@ -160,7 +166,7 @@ def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url:
             for i, video_url in enumerate(video_urls):
                 TASKS[task_id]["progress"] = int((i / total) * 100)
                 try:
-                    final_local_path = _process_one_video(video_url, cover_path, watermark_path, workdir)
+                    final_local_path = _process_one_video(video_url, bar_text, bar_color, text_color, watermark_path, workdir)
                     key = f"instagram-dark/{user_id}/{uuid.uuid4().hex}.mp4"
                     final_url = _upload_to_r2(final_local_path, key)
                     results.append({"original_url": video_url, "final_url": final_url, "status": "done"})
