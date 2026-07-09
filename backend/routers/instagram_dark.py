@@ -94,7 +94,9 @@ async def list_reels(profile: str, count: int = 24):
 class ProcessRequest(BaseModel):
     user_id: str
     video_urls: List[str]
-    cover_image_url: Optional[str] = None
+    bar_text: Optional[str] = None
+    bar_color: Optional[str] = None
+    text_color: Optional[str] = None
     watermark_image_url: Optional[str] = None
 
 
@@ -104,8 +106,8 @@ class ProcessResponse(BaseModel):
 
 @router.post("/process", response_model=ProcessResponse)
 async def process_reels(req: ProcessRequest, background_tasks: BackgroundTasks):
-    """Roda o processamento em lote (download + capa + marca d'água) em
-    segundo plano, dentro do próprio serviço web — sem precisar de um
+    """Roda o processamento em lote (download + faixa/molde + marca d'água)
+    em segundo plano, dentro do próprio serviço web — sem precisar de um
     worker Celery separado (economiza o custo de um serviço a mais no
     Render, viável pra uma ferramenta de uso ocasional como essa)."""
     from tasks.instagram_dark_tasks import run_batch_job, TASKS
@@ -119,7 +121,9 @@ async def process_reels(req: ProcessRequest, background_tasks: BackgroundTasks):
         task_id=task_id,
         user_id=req.user_id,
         video_urls=req.video_urls,
-        cover_image_url=req.cover_image_url,
+        bar_text=req.bar_text,
+        bar_color=req.bar_color,
+        text_color=req.text_color,
         watermark_image_url=req.watermark_image_url,
     )
     return ProcessResponse(task_id=task_id)
