@@ -53,12 +53,15 @@ def _upload_to_r2(local_path: str, key: str) -> str:
     return f"{settings.r2_public_url}/{key}"
 
 
-def _process_one_video(video_url: str, cover_path: str, watermark_path: str | None, workdir: str) -> str:
-    """Baixa 1 reel, prende a capa no início, aplica marca d'água, retorna
-    o caminho local do arquivo final pronto pra subir."""
+def _process_one_video(video_url: str, cover_path: str | None, watermark_path: str | None, workdir: str) -> str:
+    """Baixa 1 reel, opcionalmente prende a capa no início, opcionalmente
+    aplica marca d'água, retorna o caminho local do arquivo final pronto
+    pra subir. Capa e marca d'água são independentes — qualquer uma pode
+    faltar."""
     uid = uuid.uuid4().hex[:8]
     raw_path = os.path.join(workdir, f"raw_{uid}.mp4")
     intro_path = os.path.join(workdir, f"intro_{uid}.mp4")
+    scaled_path = os.path.join(workdir, f"scaled_{uid}.mp4")
     concat_path = os.path.join(workdir, f"concat_{uid}.mp4")
     final_path = os.path.join(workdir, f"final_{uid}.mp4")
 
@@ -85,42 +88,57 @@ def _process_one_video(video_url: str, cover_path: str, watermark_path: str | No
     else:
         width, height = orig_width, orig_height
 
-    subprocess.run([
-        "ffmpeg", "-y", "-threads", "1",
-        "-loop", "1", "-i", cover_path,
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-t", "2",
-        "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,fps=30",
-        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-pix_fmt", "yuv420p",
-        "-shortest", intro_path,
-    ], check=True, capture_output=True)
+    scale_filter = f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2"
 
-    subprocess.run([
-        "ffmpeg", "-y", "-threads", "1",
-        "-i", intro_path, "-i", raw_path,
-        "-filter_complex",
-        f"[1:v:0]scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2[reelv];"
-        f"[0:v:0][0:a:0][reelv][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
-        "-map", "[outv]", "-map", "[outa]",
-        "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
-        concat_path,
-    ], check=True, capture_output=True)
+    if cover_path:
+        # Cria o clipe de intro a partir da capa e concatena com o reel
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-loop", "1", "-i", cover_path,
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", "2",
+            "-vf", f"{scale_filter},fps=30",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-pix_fmt", "yuv420p",
+            "-shortest", intro_path,
+        ], check=True, capture_output=True)
+
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", intro_path, "-i", raw_path,
+            "-filter_complex",
+            f"[1:v:0]{scale_filter}[reelv];"
+            f"[0:v:0][0:a:0][reelv][1:a:0]concat=n=2:v=1:a=1[outv][outa]",
+            "-map", "[outv]", "-map", "[outa]",
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            concat_path,
+        ], check=True, capture_output=True)
+        base_path = concat_path
+    else:
+        # Sem capa — só reduz a resolução do reel baixado, sem concatenar nada
+        subprocess.run([
+            "ffmpeg", "-y", "-threads", "1",
+            "-i", raw_path,
+            "-vf", scale_filter,
+            "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+            scaled_path,
+        ], check=True, capture_output=True)
+        base_path = scaled_path
 
     if watermark_path:
         subprocess.run([
             "ffmpeg", "-y", "-threads", "1",
-            "-i", concat_path, "-i", watermark_path,
+            "-i", base_path, "-i", watermark_path,
             "-filter_complex", "overlay=W-w-24:H-h-24",
             "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "copy",
             final_path,
         ], check=True, capture_output=True)
     else:
-        final_path = concat_path
+        final_path = base_path
 
     return final_path
 
 
-def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url: str, watermark_image_url: str | None = None):
+def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url: str | None = None, watermark_image_url: str | None = None):
     """Chamada pelo BackgroundTasks do FastAPI — roda de verdade o
     processamento, atualizando TASKS[task_id] conforme avança."""
     TASKS[task_id] = {"status": "processing", "progress": 0, "videos": []}
@@ -129,8 +147,10 @@ def run_batch_job(task_id: str, user_id: str, video_urls: list, cover_image_url:
 
     try:
         with tempfile.TemporaryDirectory() as workdir:
-            cover_path = os.path.join(workdir, "cover.jpg")
-            _download(cover_image_url, cover_path)
+            cover_path = None
+            if cover_image_url:
+                cover_path = os.path.join(workdir, "cover.jpg")
+                _download(cover_image_url, cover_path)
 
             watermark_path = None
             if watermark_image_url:
