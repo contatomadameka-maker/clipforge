@@ -76,6 +76,7 @@ const GERADOR_TIPOS: Record<string, { label: string; desc: string; icon: string 
   criacao_livre:  { label: "Criação Livre de Vídeo", desc: "Prompt livre, com ou sem imagem de referência conectada", icon: "🎥" },
   modo_cena:      { label: "Modo Cena", desc: "Cenário/ambiente em movimento, sem avatar, sem fala", icon: "🎬" },
   animar_imagem:  { label: "Animar Imagem", desc: "Anima 1 imagem conectada com um movimento simples, sem diálogo", icon: "✨" },
+  persona_fixa:   { label: "Persona Fixa (Kling)", desc: "Mantém o MESMO rosto da sua influencer entre vídeos — motor diferente do Vídeo de Produto", icon: "👤" },
 };
 
 // Créditos por segundo, por resolução — 720p custa 2,25x mais na
@@ -567,6 +568,7 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
           {tipo === "criacao_livre" && "Conecte qualquer bloco Mídia como referência (opcional) e descreva livremente o que quer gerar."}
           {tipo === "modo_cena" && "Não precisa de foto — descreva o ambiente/cenário. Vídeo mudo, sem avatar."}
           {tipo === "animar_imagem" && "Conecte 1 bloco Mídia ao Gerador — é a imagem que vai ganhar movimento."}
+          {tipo === "persona_fixa" && "Conecte a foto da persona (obrigatória) e, se quiser, a foto do produto também."}
         </p>
       </div>
 
@@ -621,6 +623,47 @@ function GeradorPanel({ node, update }: { node: Node<BlockData>; update: (p: Par
             </div>
             <textarea value={node.data.dialogue || ""} onChange={e => update({ dialogue: e.target.value })}
               placeholder='Ex: "Esse produto mudou minha vida, perdi 10kg em 30 dias..."' rows={4}
+              className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+          </div>
+        </>
+      )}
+
+      {/* ── Persona Fixa (Kling) ── */}
+      {tipo === "persona_fixa" && (
+        <>
+          <div className="rounded-[8px] px-3 py-2.5" style={{ background: "rgba(96,165,250,0.08)", border: "0.5px solid rgba(96,165,250,0.2)" }}>
+            <p className="text-[11px] text-[#60a5fa]">👤 Conecte uma foto de verdade da sua influencer/persona no bloco Mídia (Persona) — esse modo <strong>exige foto</strong>, não aceita só descrição em texto.</p>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium text-[#9090a8] block mb-2">Cena</label>
+            <div className="grid grid-cols-1 gap-1.5 mb-2">
+              {SCENE_TEMPLATES.map(t => (
+                <button key={t.label} type="button" onClick={() => update({ scenePrompt: t.text })}
+                  className="text-left px-2.5 py-2 rounded-[8px] text-[11px] cursor-pointer border-none"
+                  style={node.data.scenePrompt === t.text ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b", border: "0.5px solid rgba(245,158,11,0.4)" } : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.07)" }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+            <textarea value={node.data.scenePrompt || ""} onChange={e => update({ scenePrompt: e.target.value })}
+              placeholder="Descreva a cena..." rows={3}
+              className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-medium text-[#9090a8]">Fala</label>
+              <button type="button" onClick={generateScript} disabled={generating}
+                className="flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium cursor-pointer border-none disabled:opacity-40"
+                style={{ background: "rgba(248,113,113,0.1)", color: "#f87171", border: "0.5px solid rgba(248,113,113,0.2)" }}>
+                {generating ? "Gerando..." : "✨ Gerar com IA"}
+              </button>
+            </div>
+            <textarea value={node.data.dialogue || ""} onChange={e => update({ dialogue: e.target.value })}
+              placeholder='Ex: "Gente, olha esse vestido que eu tô usando..."' rows={4}
               className="w-full px-3 py-2.5 rounded-[8px] text-sm resize-none outline-none placeholder-[#3a3a4a]"
               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
           </div>
@@ -1010,6 +1053,16 @@ export default function TikTokCanvasInner() {
     } else if (tipo === "animar_imagem") {
       if (collectConnectedImages(geradorId).length === 0) { alert("Conecte 1 bloco Mídia ao Gerador — é a imagem que vai animar!"); return; }
       if (!geradorNode.data.motionPrompt) { alert("Descreva o movimento no Gerador!"); return; }
+    } else if (tipo === "persona_fixa") {
+      const connectedEdges = edges.filter(e => e.target === geradorId);
+      let personaImageUrl = "";
+      for (const edge of connectedEdges) {
+        const source = nodes.find(n => n.id === edge.source);
+        if (source?.data.type === "midia" && source.data.role === "persona") personaImageUrl = (source.data.imageUrl as string) || "";
+      }
+      if (!personaImageUrl) { alert("Conecte uma foto de verdade no bloco Persona — esse modo exige foto, não aceita só texto!"); return; }
+      if (!geradorNode.data.scenePrompt) { alert("Descreva a cena no Gerador!"); return; }
+      if (!geradorNode.data.dialogue) { alert("Preencha a fala no Gerador!"); return; }
     }
 
     if (cost > userCredits) { setCreditModal({ needed: cost, have: userCredits }); return; }
@@ -1097,8 +1150,19 @@ export default function TikTokCanvasInner() {
     }
 
     // Monta o payload de acordo com o tipo selecionado no Gerador
-    let seedanceBody: Record<string, any>;
-    if (tipo === "video_produto") {
+    let seedanceBody: Record<string, any> | null = null;
+    let klingBody: Record<string, any> | null = null;
+
+    if (tipo === "persona_fixa") {
+      klingBody = {
+        persona_image_url: personaImageUrl,
+        product_image_url: productImageUrl || null,
+        scene_prompt: scenePrompt,
+        dialogue,
+        aspect_ratio: (geradorNode.data.aspectRatio as string) || "9:16",
+        duration,
+      };
+    } else if (tipo === "video_produto") {
       seedanceBody = {
         product_image_url: productImageUrl,
         persona_image_url: personaImageUrl || null,
@@ -1136,11 +1200,17 @@ export default function TikTokCanvasInner() {
       };
     }
 
+    // Persona Fixa usa o Kling (fal.ai) — endpoint e payload diferentes
+    // do Seedance/Replicate usado por todos os outros tipos
+    const generateUrl = tipo === "persona_fixa" ? `${API}/kling/generate` : `${API}/seedance/generate`;
+    const statusUrlBase = tipo === "persona_fixa" ? `${API}/kling/status` : `${API}/seedance/status`;
+    const bodyToSend = tipo === "persona_fixa" ? klingBody : seedanceBody;
+
     try {
-      const res = await fetch(`${API}/seedance/generate`, {
+      const res = await fetch(generateUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(seedanceBody),
+        body: JSON.stringify(bodyToSend),
       });
       if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Erro ao iniciar geração"); }
       const data = await res.json();
@@ -1153,7 +1223,7 @@ export default function TikTokCanvasInner() {
       const poll = setInterval(async () => {
         attempts++;
         try {
-          const statusRes = await fetch(`${API}/seedance/status/${taskId}`);
+          const statusRes = await fetch(`${statusUrlBase}/${taskId}`);
           const statusData = await statusRes.json();
           updateNodeData(resultId, { progress: Math.min(25 + attempts * 3, 95) });
 
