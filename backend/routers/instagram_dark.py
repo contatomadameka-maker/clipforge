@@ -147,6 +147,11 @@ async def reel_by_url(url: str):
             if video_versions:
                 video_url = video_versions[0].get("url", "")
         if not video_url:
+            # Log de debug: mostra as chaves de nível raiz e do "media"
+            # resolvido, pra descobrir onde o video_url realmente está
+            # nessa resposta sem precisar testar URL por URL nos logs.
+            print(f"[instagram-dark] reel-by-url SEM video_url. Chaves da raiz: {list(data.keys())}")
+            print(f"[instagram-dark] reel-by-url Chaves do 'media' resolvido: {list(media.keys())}")
             raise HTTPException(status_code=422, detail="Esse link não parece ser de um vídeo (Reels/vídeo).")
 
         thumb_url = media.get("thumbnail_url", "")
