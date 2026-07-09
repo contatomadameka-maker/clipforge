@@ -138,8 +138,7 @@ async def reel_by_url(url: str):
             raise HTTPException(status_code=502, detail="Erro ao buscar esse Reels.")
 
         data = media_res.json()
-        media = data.get("response", {}).get("items", [{}])[0] if data.get("response") else data
-        media = media.get("media", media)
+        media = data.get("media_or_ad", data)
 
         video_url = media.get("video_url", "")
         if not video_url:
