@@ -24,8 +24,8 @@ KLING_MODEL = "fal-ai/kling-video/v3/pro/image-to-video"
 
 
 class GenerateKlingRequest(BaseModel):
-    persona_image_url: str   # obrigatório — é o que mantém o rosto consistente
-    product_image_url: str   # obrigatório — produto que a persona segura
+    persona_image_url: str            # obrigatório — é o que mantém o rosto consistente
+    product_image_url: Optional[str] = None  # opcional — pode ser só a persona, sem produto
     scene_prompt: str
     dialogue: str
     aspect_ratio: str = "9:16"
@@ -39,11 +39,13 @@ class KlingResponse(BaseModel):
 
 def _build_kling_prompt(req: GenerateKlingRequest) -> str:
     """Monta o prompt no formato que o Kling Elements espera —
-    @Element1 (persona) e @Element2 (produto), diálogo entre aspas."""
-    return (
-        f"@Element1 segura o produto @Element2, {req.scene_prompt}, "
-        f'e fala diretamente para a câmera: "{req.dialogue}"'
-    )
+    @Element1 (persona) e, se tiver produto, @Element2. Diálogo
+    sempre entre aspas."""
+    if req.product_image_url:
+        subject = f"@Element1 segura o produto @Element2, {req.scene_prompt}"
+    else:
+        subject = f"@Element1, {req.scene_prompt}"
+    return f'{subject}, e fala diretamente para a câmera: "{req.dialogue}"'
 
 
 @router.post("/generate", response_model=KlingResponse)
@@ -58,12 +60,13 @@ async def generate_kling_persona(req: GenerateKlingRequest):
 
     prompt = _build_kling_prompt(req)
 
+    elements = [{"frontal_image_url": req.persona_image_url}]
+    if req.product_image_url:
+        elements.append({"frontal_image_url": req.product_image_url})
+
     payload = {
         "prompt": prompt,
-        "elements": [
-            {"frontal_image_url": req.persona_image_url},
-            {"frontal_image_url": req.product_image_url},
-        ],
+        "elements": elements,
         "duration": req.duration,
         "generate_audio": True,
     }
