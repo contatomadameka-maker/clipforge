@@ -42,11 +42,18 @@ class ReelItem(BaseModel):
     duration_seconds: float = 0
 
 
-@router.get("/list-reels", response_model=List[ReelItem])
-async def list_reels(profile: str, count: int = 24):
-    """Lista os Reels mais recentes de um perfil público. count tem teto de
-    100 por chamada (evita custo alto de uma vez só na HikerAPI)."""
-    count = min(count, 100)
+class ListReelsResponse(BaseModel):
+    reels: List[ReelItem]
+    next_max_id: Optional[str] = None
+
+
+@router.get("/list-reels", response_model=ListReelsResponse)
+async def list_reels(profile: str, max_id: Optional[str] = None):
+    """Lista uma página de Reels de um perfil público. Pra pegar a próxima
+    página, chama de novo passando o next_max_id que veio na resposta
+    anterior — a HikerAPI pagina por cursor (max_id), não por quantidade
+    pedida de uma vez (confirmado: amount não controla o tamanho real da
+    página nesse endpoint, sempre volta ~12 por chamada)."""
     username = extract_username(profile)
 
     if not settings.hikerapi_key:
@@ -64,12 +71,15 @@ async def list_reels(profile: str, count: int = 24):
         user_data = user_res.json()
         user_id = user_data.get("pk") or user_data.get("id")
 
-        # 2) Busca os reels desse usuário — endpoint correto é /v1/user/clips,
-        # parâmetro de quantidade é "amount", e a resposta vem como uma lista
-        # direta (não embrulhada em {"items": [...]})
+        # 2) Busca uma página de reels — passa max_id só se veio (primeira
+        # página não tem cursor ainda)
+        params = {"user_id": user_id}
+        if max_id:
+            params["max_id"] = max_id
+
         reels_res = await client.get(
             f"{HIKERAPI_BASE}/v1/user/clips",
-            params={"user_id": user_id, "amount": count},
+            params=params,
             headers={"x-access-key": settings.hikerapi_key},
         )
         if reels_res.status_code != 200:
@@ -77,11 +87,7 @@ async def list_reels(profile: str, count: int = 24):
 
         items = reels_res.json()
         result = []
-        skipped = 0
         for media in items:
-            # video_url costuma vir direto, mas alguns itens só têm o dado
-            # dentro de video_versions (lista) — tenta os dois caminhos
-            # antes de descartar o item.
             video_url = media.get("video_url", "")
             if not video_url:
                 video_versions = media.get("video_versions") or []
@@ -102,11 +108,13 @@ async def list_reels(profile: str, count: int = 24):
                     views=media.get("play_count", 0) or 0,
                     duration_seconds=media.get("video_duration", 0) or 0,
                 ))
-            else:
-                skipped += 1
 
-        print(f"[instagram-dark] {len(items)} itens recebidos, {len(result)} com vídeo válido, {skipped} descartados")
-        return result
+        # O cursor pra próxima página é o pk do último item dessa página —
+        # padrão comum de paginação por cursor em APIs desse tipo.
+        next_max_id = result[-1].media_id if result else None
+
+        print(f"[instagram-dark] página com {len(result)} reels, next_max_id={next_max_id}")
+        return ListReelsResponse(reels=result, next_max_id=next_max_id)
 
 
 class ProcessRequest(BaseModel):
