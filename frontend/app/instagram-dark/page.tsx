@@ -12,6 +12,39 @@ import { getSupabase } from "@/lib/supabase";
 const API = "https://clipforge-6yzz.onrender.com";
 const CREDITS_PER_REEL = 25;
 
+// Download forçado via blob — necessário porque o atributo `download` do
+// <a> é IGNORADO pelo navegador quando o arquivo é de outro domínio (aqui,
+// R2 vs a própria página no Vercel). Sem isso, clicar só abre o vídeo em
+// vez de baixar.
+async function downloadVideoBlob(url: string, filename: string) {
+  try {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = blobUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(blobUrl);
+  } catch {
+    // Fallback: se o fetch falhar (ex: CORS bloqueado na origem), abre em nova aba
+    window.open(url, "_blank");
+  }
+}
+
+// Baixa vários vídeos em sequência, com um pequeno intervalo entre eles —
+// baixar tudo ao mesmo tempo pode fazer o navegador bloquear downloads
+// múltiplos automáticos (proteção anti-spam do próprio Chrome/Firefox).
+async function downloadAllBlobs(items: { url: string; filename: string }[], onProgress?: (done: number, total: number) => void) {
+  for (let i = 0; i < items.length; i++) {
+    await downloadVideoBlob(items[i].url, items[i].filename);
+    onProgress?.(i + 1, items.length);
+    await new Promise(r => setTimeout(r, 400));
+  }
+}
+
 interface ReelItem {
   media_id: string;
   video_url: string;
@@ -122,6 +155,8 @@ export default function InstagramDarkPage() {
   const [batchProgress, setBatchProgress] = useState(0);
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [downloadingAll, setDownloadingAll] = useState(false);
+  const [downloadAllProgress, setDownloadAllProgress] = useState({ done: 0, total: 0 });
 
   async function getUserId(): Promise<string> {
     const sb = getSupabase();
@@ -619,7 +654,8 @@ export default function InstagramDarkPage() {
                   {r.status === "done" && r.final_url ? (
                     <>
                       <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
-                      <a href={r.final_url} download className="block text-center py-2 text-xs no-underline" style={{ color: "#3ecf8e" }}>⬇️ Baixar</a>
+                      <button type="button" onClick={() => downloadVideoBlob(r.final_url as string, `reel-${Date.now()}.mp4`)}
+                        className="block w-full text-center py-2 text-xs no-underline cursor-pointer border-none" style={{ background: "transparent", color: "#3ecf8e" }}>⬇️ Baixar</button>
                     </>
                   ) : (
                     <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
@@ -1072,14 +1108,33 @@ export default function InstagramDarkPage() {
             {/* Resultados do lote */}
             {batchResults.length > 0 && (
               <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                <p className="text-sm font-semibold mb-3">Resultado do lote</p>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-sm font-semibold">Resultado do lote</p>
+                  {batchResults.some(r => r.status === "done" && r.final_url) && (
+                    <button type="button" disabled={downloadingAll}
+                      onClick={async () => {
+                        const items = batchResults
+                          .filter(r => r.status === "done" && r.final_url)
+                          .map((r, i) => ({ url: r.final_url as string, filename: `video-lote-${i + 1}.mp4` }));
+                        setDownloadingAll(true);
+                        setDownloadAllProgress({ done: 0, total: items.length });
+                        await downloadAllBlobs(items, (done, total) => setDownloadAllProgress({ done, total }));
+                        setDownloadingAll(false);
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
+                      style={{ background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
+                      {downloadingAll ? `⏳ Baixando ${downloadAllProgress.done}/${downloadAllProgress.total}...` : "⬇️ Baixar todos"}
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {batchResults.map((r, i) => (
                     <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
                       {r.status === "done" && r.final_url ? (
                         <>
                           <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
-                          <a href={r.final_url} download className="block text-center py-2 text-xs no-underline" style={{ color: "#3ecf8e" }}>⬇️ Baixar</a>
+                          <button type="button" onClick={() => downloadVideoBlob(r.final_url as string, `video-lote-${i + 1}.mp4`)}
+                            className="block w-full text-center py-2 text-xs cursor-pointer border-none" style={{ background: "transparent", color: "#3ecf8e" }}>⬇️ Baixar</button>
                         </>
                       ) : (
                         <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
