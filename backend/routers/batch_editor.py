@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import os
+import random
 import tempfile
 import uuid
 from io import BytesIO
@@ -108,6 +109,12 @@ class BatchEditRequest(BaseModel):
     overlay_width_pct: float = 20.0   # largura da marca, % da largura do canvas
     overlay_opacity_pct: float = 100.0
 
+    # ── Fase 4: Anti-duplicação ──
+    # Cada um é independente — pode ligar só um, todos, ou nenhum.
+    anti_duplication: bool = False  # zoom/cor levemente diferentes, ÚNICOS por vídeo (mesmo vindo da mesma fonte)
+    speed_variation: bool = False   # aplica ~1.02x de velocidade (vídeo + áudio)
+    mirror_videos: bool = False     # espelha horizontalmente (efeito espelho)
+
 
 async def _run(cmd: list[str]) -> tuple[int, bytes, bytes]:
     proc = await asyncio.create_subprocess_exec(
@@ -151,24 +158,32 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 
 
 async def _ensure_font_downloaded(client: httpx.AsyncClient, font_name: str) -> str:
-    """Garante que a fonte escolhida está disponível localmente. 'Sistema'
-    já vem no repo; as outras são baixadas do Google Fonts na primeira vez
-    e ficam cacheadas em disco pras próximas chamadas."""
-    key = (font_name or "sistema").strip().lower()
-    if key not in FONT_SOURCES:
+    """Garante que a fonte escolhida está disponível localmente.
+    - 'sistema' (ou vazio/desconhecido) -> fonte padrão já incluída no repo
+    - nome de uma das fontes pré-definidas (FONT_SOURCES) -> baixa do Google Fonts
+    - uma URL (fonte personalizada enviada pelo usuário) -> baixa direto dela
+    Tudo cacheado em disco depois da primeira vez."""
+    key = (font_name or "sistema").strip()
+    is_custom_url = key.startswith("http://") or key.startswith("https://")
+
+    cache_key = key.lower() if not is_custom_url else key  # URL mantém case original
+    if not is_custom_url and cache_key not in FONT_SOURCES:
         return _FONT_PATH  # "sistema" ou nome desconhecido -> fonte padrão
 
-    if key in _font_file_cache:
-        return _font_file_cache[key]
+    if cache_key in _font_file_cache:
+        return _font_file_cache[cache_key]
 
-    url = FONT_SOURCES[key]
-    local_path = os.path.join(tempfile.gettempdir(), f"font_{key}.ttf")
+    url = key if is_custom_url else FONT_SOURCES[cache_key]
+    ext = "ttf"
+    if "." in url.rsplit("/", 1)[-1]:
+        ext = url.rsplit(".", 1)[-1].split("?")[0][:4] or "ttf"
+    local_path = os.path.join(tempfile.gettempdir(), f"font_{uuid.uuid4().hex[:10]}.{ext}")
     try:
         res = await client.get(url, timeout=20)
         if res.status_code == 200 and res.content:
             with open(local_path, "wb") as f:
                 f.write(res.content)
-            _font_file_cache[key] = local_path
+            _font_file_cache[cache_key] = local_path
             return local_path
         logger.error(f"[batch_editor] falha ao baixar fonte '{key}' (HTTP {res.status_code}) — usando Sistema")
     except Exception as e:
@@ -359,19 +374,27 @@ def _compute_auto_zoom_pct(cw: int, ch: int, border_target_pct: float) -> float:
     return max(20.0, min(z_pct, 400.0))  # limites de segurança pra não gerar um zoom absurdo
 
 
-def _build_filter(src_w: int, src_h: int, req: BatchEditRequest, effective_zoom_pct: float) -> str:
+def _build_filter(src_w: int, src_h: int, req: BatchEditRequest, effective_zoom_pct: float,
+                   mirror: bool = False, eq_filter: Optional[str] = None, speed_mult: Optional[float] = None) -> str:
     """Monta a cadeia de filtros do FFmpeg pra encaixar o vídeo no canvas
     1080x1920 com zoom/posição/bordas. Os números são calculados aqui em
     Python (pixels concretos) em vez de expressões dentro do FFmpeg —
     mais fácil de depurar e logar se algo sair errado.
     `effective_zoom_pct` já vem pronto de fora — pode ser o req.zoom
-    literal (modo manual) ou o zoom calculado por vídeo (modo automático)."""
+    literal (modo manual), o zoom calculado por vídeo (modo automático),
+    ou esse valor com um pouquinho de jitter aleatório em cima (anti-dup).
+    `mirror`/`eq_filter`/`speed_mult` são os efeitos de anti-duplicação —
+    opcionais, ficam de fora da cadeia se não vierem preenchidos."""
+
+    parts: list[str] = []
+    if mirror:
+        parts.append("hflip")
 
     # 1) Corte manual de topo/rodapé do vídeo ORIGINAL — remove legenda,
     #    marca d'água ou faixa que já veio queimada no vídeo fonte.
     src_w_c, cropped_h = _cropped_source_dims(src_w, src_h, req)
     top_px = int(src_h * max(0.0, min(req.fill_top_pct, 45.0)) / 100)
-    crop_source = f"crop={src_w}:{cropped_h}:0:{top_px}"
+    parts.append(f"crop={src_w}:{cropped_h}:0:{top_px}")
 
     # 2) Escala pra caber no canvas ("contain") + fator de zoom por cima.
     scale_base = min(CANVAS_W / src_w, CANVAS_H / cropped_h)
@@ -380,7 +403,7 @@ def _build_filter(src_w: int, src_h: int, req: BatchEditRequest, effective_zoom_
 
     new_w = max(2, int(round(src_w * scale / 2) * 2))   # sempre par — requisito do libx264
     new_h = max(2, int(round(cropped_h * scale / 2) * 2))
-    scale_filter = f"scale={new_w}:{new_h}"
+    parts.append(f"scale={new_w}:{new_h}")
 
     # 3) Preenche até pelo menos o tamanho do canvas (cobre zoom < 100%),
     #    na cor escolhida, deslocado conforme a posição — não sempre
@@ -390,16 +413,27 @@ def _build_filter(src_w: int, src_h: int, req: BatchEditRequest, effective_zoom_
     pad_x = int((pad_w - new_w) * (req.pos_x / 100))
     pad_y = int((pad_h - new_h) * (req.pos_y / 100))
     color = _hex_to_ffmpeg_color(req.border_color)
-    pad_filter = f"pad={pad_w}:{pad_h}:{pad_x}:{pad_y}:color={color}"
+    parts.append(f"pad={pad_w}:{pad_h}:{pad_x}:{pad_y}:color={color}")
 
     # 4) Corta pro tamanho exato do canvas (cobre zoom > 100%, onde o
     #    vídeo escalado ficou maior que 1080x1920 e precisa recortar o
     #    excesso), também respeitando a posição escolhida.
     crop_x = int((pad_w - CANVAS_W) * (req.pos_x / 100))
     crop_y = int((pad_h - CANVAS_H) * (req.pos_y / 100))
-    final_crop = f"crop={CANVAS_W}:{CANVAS_H}:{crop_x}:{crop_y}"
+    parts.append(f"crop={CANVAS_W}:{CANVAS_H}:{crop_x}:{crop_y}")
 
-    return f"{crop_source},{scale_filter},{pad_filter},{final_crop}"
+    # 5) Anti-duplicação: pequeno ajuste de cor (imperceptível a olho nu,
+    #    mas muda o hash/assinatura do arquivo) — só entra se pedido.
+    if eq_filter:
+        parts.append(eq_filter)
+
+    # 6) Velocidade — precisa ser o ÚLTIMO filtro de vídeo da cadeia
+    #    (mexe no tempo, não em pixel). O áudio correspondente é ajustado
+    #    à parte, via -af na chamada do ffmpeg.
+    if speed_mult:
+        parts.append(f"setpts=PTS/{speed_mult}")
+
+    return ",".join(parts)
 
 
 async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[str], req: BatchEditRequest) -> Optional[bytes]:
@@ -461,7 +495,22 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
         else:
             effective_zoom = req.zoom
 
-        vf = _build_filter(src_w, src_h, req, effective_zoom)
+        # Anti-duplicação — cada vídeo recebe uma variação PRÓPRIA e
+        # aleatória (não é a mesma pra todos do lote), pra não ficarem
+        # todos com a "assinatura" idêntica mesmo vindo da mesma origem.
+        eq_filter = None
+        speed_mult = 1.02 if req.speed_variation else None
+        if req.anti_duplication:
+            rnd = random.Random()
+            extra_zoom = rnd.uniform(1.0, 1.025)  # até 2,5% de zoom extra, imperceptível
+            effective_zoom = effective_zoom * extra_zoom
+            b = rnd.uniform(-0.02, 0.02)
+            c = rnd.uniform(-0.03, 0.03)
+            s = rnd.uniform(-0.05, 0.05)
+            eq_filter = f"eq=brightness={b:.3f}:contrast={1 + c:.3f}:saturation={1 + s:.3f}"
+            logger.info(f"[batch_editor] job={job_id} idx={index} anti_dup zoom_extra={extra_zoom:.3f} eq={eq_filter}")
+
+        vf = _build_filter(src_w, src_h, req, effective_zoom, mirror=req.mirror_videos, eq_filter=eq_filter, speed_mult=speed_mult)
         logger.info(f"[batch_editor] job={job_id} idx={index} filtro={vf}")
 
         # Título — prioridade: (1) título ESPECÍFICO desse vídeo
@@ -478,6 +527,10 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
 
         out_path = os.path.join(tempfile.gettempdir(), f"batch_{job_id}_{index}.mp4")
 
+        # Áudio precisa acompanhar a mudança de velocidade do vídeo
+        # (senão desincroniza) — atempo é o equivalente de setpts pro áudio.
+        audio_speed_args = ["-af", f"atempo={speed_mult}"] if speed_mult else []
+
         if overlay_png:
             overlay_path = os.path.join(tempfile.gettempdir(), f"batch_{job_id}_{index}_overlay.png")
             with open(overlay_path, "wb") as f:
@@ -487,6 +540,7 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
                 "ffmpeg", "-y", "-i", video_url, "-i", overlay_path,
                 "-filter_complex", f"[0:v]{vf}[base];[base][1:v]overlay=0:0[outv]",
                 "-map", "[outv]", "-map", "0:a?",
+                *audio_speed_args,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "128k",
                 "-threads", "1",
@@ -496,6 +550,7 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
             cmd = [
                 "ffmpeg", "-y", "-i", video_url,
                 "-vf", vf,
+                *audio_speed_args,
                 "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "128k",
                 "-threads", "1",
