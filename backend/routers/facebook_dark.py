@@ -69,9 +69,11 @@ async def list_videos(page_url: str, limit: int = 20):
             params={"token": settings.apify_api_token},
             json=payload,
         )
-        logger.info(f"[facebook-dark] run-sync-get-dataset-items http={res.status_code} body={res.text[:2000]}")
+        logger.info(f"[facebook-dark] run-sync-get-dataset-items http={res.status_code} body={res.text[:3000]}")
 
-        if res.status_code != 200:
+        # A Apify usa 201 Created pra indicar sucesso nesse endpoint
+        # síncrono (não 200 OK) — aceita os dois.
+        if res.status_code not in (200, 201):
             raise HTTPException(status_code=502, detail=f"Erro ao buscar vídeos dessa página: {res.text[:500]}")
 
         items = res.json()
@@ -80,15 +82,31 @@ async def list_videos(page_url: str, limit: int = 20):
             raise HTTPException(status_code=502, detail="Formato de resposta inesperado da Apify (não veio uma lista).")
 
         result = []
-        for item in items:
-            video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "mediaUrl", "url")
+        for idx, item in enumerate(items):
+            # Esse Actor devolve no formato estilo yt-dlp: uma lista
+            # "formats" com várias versões do mesmo vídeo (só áudio, só
+            # vídeo, tamanhos diferentes) — não um campo "videoUrl" direto.
+            # Escolhe o formato de VÍDEO de maior qualidade (vcodec
+            # diferente de "none", que é o marcador de "isso é só áudio").
+            formats = item.get("formats") or []
+            video_formats = [f for f in formats if f.get("url") and f.get("vcodec") and f.get("vcodec") != "none"]
+            chosen = max(video_formats, key=lambda f: f.get("tbr") or 0) if video_formats else None
+            if not chosen and formats:
+                # Nenhum formato com vídeo de verdade — pega qualquer um só
+                # pra não descartar o item, mas isso indicaria um post sem
+                # vídeo de fato (só áudio/imagem).
+                chosen = formats[0] if formats[0].get("url") else None
+
+            video_url = (chosen or {}).get("url") or _first_present(item, "videoUrl", "video_url", "downloadUrl", "url")
             if not video_url:
                 continue  # item sem vídeo (ex: foto/texto misturado no feed) — pula
 
-            thumb_url = _first_present(item, "thumbnailUrl", "thumbnail_url", "thumbnail", "previewUrl") or ""
-            views_raw = _first_present(item, "viewsCount", "views", "playCount", "video_view_count") or 0
+            thumb_url = _first_present(item, "thumbnail", "thumbnailUrl", "thumbnail_url", "previewUrl") or ""
+            views_raw = _first_present(item, "concurrent_view_count", "viewsCount", "views", "playCount", "video_view_count") or 0
             duration_raw = _first_present(item, "duration", "videoDuration", "durationSeconds") or 0
-            media_id = str(_first_present(item, "id", "videoId", "postId", "facebookUrl") or "")
+            # "id" costuma vir null nesse Actor — usa uploader_id + índice
+            # como identificador único de fallback.
+            media_id = str(_first_present(item, "id", "videoId", "postId") or f"{item.get('uploader_id', 'fb')}_{idx}")
             title = _first_present(item, "title", "text", "caption", "description") or ""
 
             try:
