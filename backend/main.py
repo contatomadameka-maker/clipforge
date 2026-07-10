@@ -7,7 +7,7 @@ logging.basicConfig(
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, credits, studio, websocket, copy, storage, heygen, cenario, seedance, videos, instagram_dark, kling_elements, batch_editor
+from routers import auth, credits, studio, websocket, copy, storage, heygen, cenario, seedance, videos, instagram_dark, kling_elements, batch_editor, tiktok_dark
 from routers import stripe_router, cakto_router
 app = FastAPI(title="ClipForge API", version="1.0.0")
 app.add_middleware(
@@ -30,6 +30,7 @@ app.include_router(videos.router, prefix="/videos", tags=["Videos"])
 app.include_router(instagram_dark.router, prefix="/instagram-dark", tags=["Instagram Dark"])
 app.include_router(kling_elements.router, prefix="/kling", tags=["Kling Elements"])
 app.include_router(batch_editor.router, prefix="/batch-editor", tags=["Batch Editor"])
+app.include_router(tiktok_dark.router, prefix="/tiktok-dark", tags=["TikTok Dark"])
 app.include_router(stripe_router.router, prefix="/stripe", tags=["Stripe"])
 app.include_router(cakto_router.router, prefix="/cakto", tags=["Cakto"])
 @app.get("/health")
