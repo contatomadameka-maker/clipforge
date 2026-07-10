@@ -25,7 +25,7 @@ settings = get_settings()
 logger = logging.getLogger("facebook_dark")
 
 APIFY_BASE = "https://api.apify.com/v2"
-ACTOR_ID = "scraper-engine~facebook-videos-scraper"  # "/" vira "~" na URL da API
+ACTOR_ID = "apify~facebook-reels-scraper"  # Actor OFICIAL da Apify — varre a página inteira (o "urls" anterior só resolvia links individuais que já tínhamos, não descobria vídeos novos)
 
 
 class VideoItem(BaseModel):
@@ -59,7 +59,7 @@ async def list_videos(page_url: str, limit: int = 20):
         raise HTTPException(status_code=503, detail="APIFY_API_TOKEN não configurado ainda no backend.")
 
     payload = {
-        "urls": [page_url.strip()],
+        "startUrls": [{"url": page_url.strip()}],
         "resultsLimit": max(1, min(limit, 100)),
     }
 
@@ -83,30 +83,36 @@ async def list_videos(page_url: str, limit: int = 20):
 
         result = []
         for idx, item in enumerate(items):
-            # Esse Actor devolve no formato estilo yt-dlp: uma lista
-            # "formats" com várias versões do mesmo vídeo (só áudio, só
-            # vídeo, tamanhos diferentes) — não um campo "videoUrl" direto.
-            # Escolhe o formato de VÍDEO de maior qualidade (vcodec
-            # diferente de "none", que é o marcador de "isso é só áudio").
-            formats = item.get("formats") or []
-            video_formats = [f for f in formats if f.get("url") and f.get("vcodec") and f.get("vcodec") != "none"]
-            chosen = max(video_formats, key=lambda f: f.get("tbr") or 0) if video_formats else None
-            if not chosen and formats:
-                # Nenhum formato com vídeo de verdade — pega qualquer um só
-                # pra não descartar o item, mas isso indicaria um post sem
-                # vídeo de fato (só áudio/imagem).
-                chosen = formats[0] if formats[0].get("url") else None
+            # Esse Actor é diferente do anterior — tenta vários formatos
+            # de saída possíveis, do mais simples ao mais aninhado, já que
+            # ainda não confirmamos o schema exato dele:
+            video_url = None
 
-            video_url = (chosen or {}).get("url") or _first_present(item, "videoUrl", "video_url", "downloadUrl", "url")
+            # (a) campo direto no item
+            video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "playAddr")
+
+            # (b) aninhado num objeto "video" ou "playback_video"
             if not video_url:
-                continue  # item sem vídeo (ex: foto/texto misturado no feed) — pula
+                nested = item.get("video") or item.get("playback_video") or {}
+                if isinstance(nested, dict):
+                    video_url = _first_present(nested, "url", "downloadUrl", "hd_url", "sd_url", "playAddr")
 
-            thumb_url = _first_present(item, "thumbnail", "thumbnailUrl", "thumbnail_url", "previewUrl") or ""
-            views_raw = _first_present(item, "concurrent_view_count", "viewsCount", "views", "playCount", "video_view_count") or 0
-            duration_raw = _first_present(item, "duration", "videoDuration", "durationSeconds") or 0
-            # "id" costuma vir null nesse Actor — usa uploader_id + índice
-            # como identificador único de fallback.
-            media_id = str(_first_present(item, "id", "videoId", "postId") or f"{item.get('uploader_id', 'fb')}_{idx}")
+            # (c) formato estilo yt-dlp (lista "formats") — usado pelo Actor anterior
+            if not video_url:
+                formats = item.get("formats") or []
+                video_formats = [f for f in formats if f.get("url") and f.get("vcodec") and f.get("vcodec") != "none"]
+                chosen = max(video_formats, key=lambda f: f.get("tbr") or 0) if video_formats else None
+                if not chosen and formats and formats[0].get("url"):
+                    chosen = formats[0]
+                video_url = (chosen or {}).get("url")
+
+            if not video_url:
+                continue  # item sem vídeo reconhecível — pula, mas não derruba o lote inteiro
+
+            thumb_url = _first_present(item, "thumbnail", "thumbnailUrl", "thumbnail_url", "previewUrl", "coverUrl") or ""
+            views_raw = _first_present(item, "playsCount", "playCount", "concurrent_view_count", "viewsCount", "views", "video_view_count") or 0
+            duration_raw = _first_present(item, "duration", "videoDuration", "durationSeconds", "video_duration") or 0
+            media_id = str(_first_present(item, "id", "videoId", "postId", "reelId") or f"{item.get('uploader_id') or item.get('pageId') or 'fb'}_{idx}")
             title = _first_present(item, "title", "text", "caption", "description") or ""
 
             try:
