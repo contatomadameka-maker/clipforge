@@ -181,7 +181,14 @@ class ProcessResponse(BaseModel):
     task_id: str
 
 
-CREDITS_PER_REEL = 25
+# Preço UNIFICADO com o Editor em Massa (15 créditos/vídeo) — antes era 25.
+# A HikerAPI custa entre US$0,0006 e US$0,02 por chamada dependendo do
+# plano contratado, e buscar+baixar 1 Reels leva só ~2-4 chamadas — então
+# mesmo no plano mais caro (Start, US$0,02/chamada) o custo real fica em
+# torno de R$0,40-0,50 por Reels, bem abaixo dos ~R$1,50 que 15 créditos
+# representam. Sobra margem confortável mesmo igualando ao preço do
+# Editor em Massa, que não paga API nenhuma (só CPU do FFmpeg).
+CREDITS_PER_REEL = 15
 
 
 @router.post("/process", response_model=ProcessResponse)
