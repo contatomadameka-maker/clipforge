@@ -80,6 +80,34 @@ async def upload_video(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Erro no upload: {str(e)}")
 
 
+@router.post("/upload/font", response_model=UploadResponse)
+async def upload_font(file: UploadFile = File(...)):
+    """Faz upload de uma fonte personalizada (.ttf/.otf) pro R2 — usada no
+    Título/Inferior do Editor em Massa. Valida pela EXTENSÃO do arquivo,
+    não pelo content_type, porque navegadores não têm um mimetype padrão
+    consistente pra arquivos de fonte."""
+    ext = (file.filename.split(".")[-1].lower() if file.filename and "." in file.filename else "")
+    if ext not in ("ttf", "otf"):
+        raise HTTPException(status_code=400, detail="Fonte deve ser .ttf ou .otf.")
+    contents = await file.read()
+    if len(contents) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Fonte muito grande. Máximo 15MB.")
+    key = f"custom-fonts/{uuid.uuid4()}.{ext}"
+    try:
+        r2 = get_r2_client()
+        r2.put_object(
+            Bucket=settings.r2_bucket_name,
+            Key=key,
+            Body=contents,
+            ContentType="font/ttf" if ext == "ttf" else "font/otf",
+            CacheControl="public, max-age=31536000",
+        )
+        url = f"{settings.r2_public_url}/{key}"
+        return UploadResponse(url=url, key=key)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro no upload: {str(e)}")
+
+
 @router.delete("/upload/{key:path}")
 async def delete_file(key: str):
     """Remove um arquivo do R2."""
