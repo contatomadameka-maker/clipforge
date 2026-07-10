@@ -134,17 +134,33 @@ async def video_by_url(url: str):
     """Busca 1 vídeo específico do TikTok direto pelo link, via
     /api/v1/tiktok/app/v3/fetch_one_video_by_share_url (confirmado na
     documentação pública da TikHub)."""
-    async with httpx.AsyncClient(timeout=30) as client:
+    clean_url = url.strip()
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+        # Links curtos (vt.tiktok.com / vm.tiktok.com) são um redirecionamento
+        # — a TikHub parece esperar o link COMPLETO (tiktok.com/@usuario/
+        # video/123...), não o link de compartilhamento curto. Resolve o
+        # redirecionamento aqui antes de mandar pra API, em vez de mandar
+        # o link curto direto (o que gerava 400 genérico da TikHub).
+        if "vt.tiktok.com" in clean_url or "vm.tiktok.com" in clean_url:
+            try:
+                redirect_res = await client.head(clean_url)
+                resolved = str(redirect_res.url)
+                logger.info(f"[tiktok-dark] link curto resolvido: {clean_url} -> {resolved}")
+                clean_url = resolved
+            except Exception as e:
+                logger.warning(f"[tiktok-dark] falha ao resolver link curto ({e}) — segue com o original")
+
         res = await client.get(
             f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_one_video_by_share_url",
-            params={"share_url": url.strip()},
+            params={"share_url": clean_url},
             headers=_auth_headers(),
         )
         logger.info(f"[tiktok-dark] fetch_one_video_by_share_url http={res.status_code} body={res.text[:800]}")
         if res.status_code == 404:
             raise HTTPException(status_code=404, detail="Vídeo não encontrado — confira se o link está certo e se o post é público.")
         if res.status_code != 200:
-            raise HTTPException(status_code=502, detail="Erro ao buscar esse vídeo do TikTok.")
+            raise HTTPException(status_code=502, detail=f"Erro ao buscar esse vídeo do TikTok: {res.text[:300]}")
 
         data = res.json()
         item = data.get("data", {}).get("aweme_detail") or data.get("data", {})
