@@ -1,4 +1,10 @@
 # backend/main.py
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from routers import auth, credits, studio, websocket, copy, storage, heygen, cenario, seedance, videos, instagram_dark, kling_elements, batch_editor
