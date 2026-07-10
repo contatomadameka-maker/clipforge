@@ -63,27 +63,32 @@ async def list_videos(profile: str, cursor: Optional[str] = None):
     username = extract_tiktok_username(profile)
 
     async with httpx.AsyncClient(timeout=30) as client:
-        # 1) Resolve o username pro sec_user_id interno do TikTok
+        # 1) Resolve o username pro sec_user_id — usando a família App V3
+        # (mais confiável que a Web API, que devolvia erro genérico "Request
+        # failed" mesmo com os parâmetros certos, igual aconteceu antes com
+        # fetch_one_video_by_share_url).
         user_res = await client.get(
-            f"{TIKHUB_BASE}/api/v1/tiktok/web/fetch_user_profile",
-            params={"unique_id": username},
+            f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/get_user_id_and_sec_user_id_by_username",
+            params={"username": username},
             headers=_auth_headers(),
         )
-        logger.info(f"[tiktok-dark] fetch_user_profile http={user_res.status_code} body={user_res.text[:500]}")
+        logger.info(f"[tiktok-dark] get_user_id_and_sec_user_id_by_username http={user_res.status_code} body={user_res.text[:800]}")
         if user_res.status_code != 200:
-            raise HTTPException(status_code=404, detail="Perfil não encontrado ou privado.")
+            raise HTTPException(status_code=404, detail=f"Perfil não encontrado ou privado: {user_res.text[:300]}")
 
         user_data = user_res.json()
+        container = user_data.get("data", {}) if isinstance(user_data.get("data"), dict) else {}
         # Formato exato da resposta ainda não confirmado — tenta os
         # caminhos mais prováveis antes de desistir.
         sec_uid = (
-            user_data.get("data", {}).get("user", {}).get("secUid")
-            or user_data.get("data", {}).get("sec_uid")
-            or user_data.get("sec_uid")
+            container.get("sec_user_id")
+            or container.get("secUid")
+            or container.get("sec_uid")
+            or user_data.get("sec_user_id")
         )
         if not sec_uid:
-            logger.error(f"[tiktok-dark] não achei sec_uid na resposta: {list(user_data.keys())}")
-            raise HTTPException(status_code=502, detail="Não consegui resolver esse perfil do TikTok (formato de resposta inesperado da TikHub).")
+            logger.error(f"[tiktok-dark] não achei sec_uid na resposta. Chaves de 'data': {list(container.keys())}")
+            raise HTTPException(status_code=502, detail=f"Não consegui resolver esse perfil do TikTok. Chaves recebidas: {list(container.keys())}")
 
         # 2) Busca uma página de vídeos do perfil
         params = {"sec_user_id": sec_uid, "count": 20}
@@ -97,7 +102,7 @@ async def list_videos(profile: str, cursor: Optional[str] = None):
         )
         logger.info(f"[tiktok-dark] fetch_user_post_videos http={videos_res.status_code} body={videos_res.text[:800]}")
         if videos_res.status_code != 200:
-            raise HTTPException(status_code=502, detail="Erro ao buscar vídeos desse perfil no TikTok.")
+            raise HTTPException(status_code=502, detail=f"Erro ao buscar vídeos desse perfil no TikTok: {videos_res.text[:300]}")
 
         data = videos_res.json()
         items = data.get("data", {}).get("aweme_list") or data.get("data", {}).get("itemList") or []
