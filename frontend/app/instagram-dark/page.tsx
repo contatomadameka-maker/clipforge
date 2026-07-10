@@ -10,7 +10,7 @@ import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "@/lib/supabase";
 
 const API = "https://clipforge-6yzz.onrender.com";
-const CREDITS_PER_REEL = 25;
+const CREDITS_PER_REEL = 15; // igualado ao Editor em Massa — antes era 25
 const BATCH_CREDITS_PER_VIDEO = 15; // Editor em Massa — preço único, tudo incluso (bordas, título, marca, anti-dup)
 
 // Fontes disponíveis — baixadas sob demanda no backend a partir do Google
