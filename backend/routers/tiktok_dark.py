@@ -20,9 +20,7 @@ from typing import List, Optional
 from config import get_settings
 import httpx
 import re
-import json
 import logging
-from urllib.parse import urlsplit, urlunsplit
 
 router = APIRouter()
 settings = get_settings()
@@ -131,19 +129,52 @@ async def list_videos(profile: str, cursor: Optional[str] = None):
         return ListVideosResponse(videos=result, next_cursor=next_cursor)
 
 
+def _parse_video_item(item: dict) -> "VideoItem":
+    """Converte um objeto 'aweme' (formato padrão de vídeo do TikTok/
+    Douyin) da TikHub pro nosso VideoItem. Centralizado aqui porque tanto
+    a busca por ID quanto por link (fallback) usam o mesmo formato."""
+    video_info = item.get("video", {})
+    play_urls = (
+        video_info.get("play_addr", {}).get("url_list")
+        or video_info.get("download_addr", {}).get("url_list")
+        or []
+    )
+    video_url = play_urls[0] if play_urls else ""
+    if not video_url:
+        logger.error(f"[tiktok-dark] item sem video_url. Chaves: {list(item.keys())}")
+        raise HTTPException(status_code=422, detail="Esse vídeo não retornou uma URL de reprodução (pode ter sido removido ou estar restrito na sua região).")
+
+    cover_urls = video_info.get("cover", {}).get("url_list") or []
+    thumb_url = cover_urls[0] if cover_urls else ""
+
+    return VideoItem(
+        media_id=str(item.get("aweme_id", "")),
+        video_url=video_url,
+        thumbnail_url=thumb_url,
+        views=item.get("statistics", {}).get("play_count", 0) or 0,
+        duration_seconds=(video_info.get("duration", 0) or 0) / 1000,
+    )
+
+
+def _extract_video_id(url: str) -> Optional[str]:
+    """Extrai o ID numérico do vídeo de uma URL completa do TikTok
+    (.../video/1234567890123456789)."""
+    match = re.search(r"/video/(\d+)", url)
+    return match.group(1) if match else None
+
+
 @router.get("/video-by-url", response_model=VideoItem)
 async def video_by_url(url: str):
-    """Busca 1 vídeo específico do TikTok direto pelo link, via
-    /api/v1/tiktok/app/v3/fetch_one_video_by_share_url (confirmado na
-    documentação pública da TikHub)."""
+    """Busca 1 vídeo específico do TikTok pelo link. Extrai o ID numérico
+    da URL e usa /api/v1/tiktok/app/v3/fetch_one_video?aweme_id=... —
+    mais confiável do que mandar a URL inteira pra API adivinhar
+    (fetch_one_video_by_share_url devolvia 'sucesso' com corpo vazio,
+    sem erro claro, então trocamos de estratégia)."""
     clean_url = url.strip()
 
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
         # Links curtos (vt.tiktok.com / vm.tiktok.com) são um redirecionamento
-        # — a TikHub parece esperar o link COMPLETO (tiktok.com/@usuario/
-        # video/123...), não o link de compartilhamento curto. Resolve o
-        # redirecionamento aqui antes de mandar pra API, em vez de mandar
-        # o link curto direto (o que gerava 400 genérico da TikHub).
+        # — resolve pra URL completa antes de extrair o ID.
         if "vt.tiktok.com" in clean_url or "vm.tiktok.com" in clean_url:
             try:
                 redirect_res = await client.head(clean_url)
@@ -153,69 +184,27 @@ async def video_by_url(url: str):
             except Exception as e:
                 logger.warning(f"[tiktok-dark] falha ao resolver link curto ({e}) — segue com o original")
 
-        # Remove parâmetros de rastreamento (?_r=1&_t=... que o TikTok gruda
-        # automaticamente no link) — a API parece não reconhecer o vídeo
-        # direito com esse "lixo" a mais na URL, mesmo respondendo "sucesso"
-        # (retorna data vazio em vez de erro claro).
-        parts = urlsplit(clean_url)
-        clean_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
-        logger.info(f"[tiktok-dark] URL limpa (sem query string): {clean_url}")
+        video_id = _extract_video_id(clean_url)
+        if not video_id:
+            raise HTTPException(status_code=422, detail=f"Não consegui identificar o ID do vídeo nessa URL: {clean_url}")
 
         res = await client.get(
-            f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_one_video_by_share_url",
-            params={"share_url": clean_url},
+            f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_one_video",
+            params={"aweme_id": video_id},
             headers=_auth_headers(),
         )
-        logger.info(f"[tiktok-dark] fetch_one_video_by_share_url http={res.status_code} body={res.text[:800]}")
+        logger.info(f"[tiktok-dark] fetch_one_video (id={video_id}) http={res.status_code} body={res.text[:1500]}")
         if res.status_code == 404:
             raise HTTPException(status_code=404, detail="Vídeo não encontrado — confira se o link está certo e se o post é público.")
         if res.status_code != 200:
             raise HTTPException(status_code=502, detail=f"Erro ao buscar esse vídeo do TikTok: {res.text[:300]}")
 
         data = res.json()
-        # Log separado com o JSON completo (não cortado) — a resposta da
-        # TikHub tem um monte de metadado (cache, billing) antes do vídeo
-        # em si, então os 800 caracteres do log acima às vezes cortam bem
-        # no meio do que interessa.
-        logger.info(f"[tiktok-dark] JSON completo: {json.dumps(data, ensure_ascii=False)}")
-
         container = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
-        # Tenta vários formatos possíveis, já que a doc não deixou claro
-        # qual — loga qual caminho funcionou (ou não) pra facilitar o
-        # próximo ajuste se ainda estiver errado.
-        item = (
-            container.get("aweme_detail")
-            or container.get("aweme_details")
-            or (container.get("data", {}) or {}).get("aweme_detail") if isinstance(container.get("data"), dict) else None
-        )
+        item = container.get("aweme_detail") or (container if ("video" in container or "aweme_id" in container) else None)
+
         if not item:
-            # Última tentativa: talvez o próprio "container" JÁ seja o
-            # objeto do vídeo (sem embrulho "aweme_detail").
-            if "video" in container or "aweme_id" in container:
-                item = container
-            else:
-                logger.error(f"[tiktok-dark] não achei o vídeo em nenhum caminho conhecido. Chaves de 'data': {list(container.keys())}")
-                raise HTTPException(status_code=422, detail=f"Formato de resposta inesperado da TikHub. Chaves recebidas: {list(container.keys())}")
+            logger.error(f"[tiktok-dark] fetch_one_video sem item reconhecível. Chaves de 'data': {list(container.keys())}")
+            raise HTTPException(status_code=422, detail=f"Formato de resposta inesperado da TikHub. Chaves recebidas: {list(container.keys())}")
 
-        video_info = item.get("video", {})
-
-        play_urls = (
-            video_info.get("play_addr", {}).get("url_list")
-            or video_info.get("download_addr", {}).get("url_list")
-            or []
-        )
-        video_url = play_urls[0] if play_urls else ""
-        if not video_url:
-            logger.error(f"[tiktok-dark] video-by-url SEM video_url. Chaves: {list(item.keys())}")
-            raise HTTPException(status_code=422, detail="Esse link não parece ser de um vídeo do TikTok.")
-
-        cover_urls = video_info.get("cover", {}).get("url_list") or []
-        thumb_url = cover_urls[0] if cover_urls else ""
-
-        return VideoItem(
-            media_id=str(item.get("aweme_id", "")),
-            video_url=video_url,
-            thumbnail_url=thumb_url,
-            views=item.get("statistics", {}).get("play_count", 0) or 0,
-            duration_seconds=(video_info.get("duration", 0) or 0) / 1000,
-        )
+        return _parse_video_item(item)
