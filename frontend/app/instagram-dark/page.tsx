@@ -495,6 +495,7 @@ export default function InstagramDarkPage() {
           title_font_size_pct: titleFontSize,
           title_color: titleColor,
           title_font: titleFont,
+          title_font_url: titleFont === "custom" && titleCustomFontUrl ? titleCustomFontUrl : null,
           bottom_text: bottomEnabled && bottomMode === "texto" && bottomText.trim() ? bottomText.trim() : null,
           bottom_image_url: bottomEnabled && bottomMode === "imagem" && bottomImageUrl ? bottomImageUrl : null,
           bottom_x_pct: bottomX,
@@ -502,6 +503,7 @@ export default function InstagramDarkPage() {
           bottom_font_size_pct: bottomFontSize,
           bottom_color: bottomColor,
           bottom_font: bottomFont,
+          bottom_font_url: bottomFont === "custom" && bottomCustomFontUrl ? bottomCustomFontUrl : null,
           overlay_image_url: overlayEnabled && overlayImageUrl ? overlayImageUrl : null,
           overlay_position: overlayPosition,
           overlay_x_pct: overlayX,
@@ -828,7 +830,7 @@ export default function InstagramDarkPage() {
                 <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
                   {r.status === "done" && r.final_url ? (
                     <>
-                      <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
+                      <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls />
                       <button type="button" onClick={() => downloadVideoBlob(r.final_url as string, `reel-${Date.now()}.mp4`)}
                         className="block w-full text-center py-2 text-xs no-underline cursor-pointer border-none" style={{ background: "transparent", color: "#3ecf8e" }}>⬇️ Baixar</button>
                     </>
@@ -1221,6 +1223,20 @@ export default function InstagramDarkPage() {
                             style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
                             {FONT_OPTIONS.map(f => <option key={f.id} value={f.id} style={{ background: "#131318" }}>{f.label}</option>)}
                           </select>
+                          {titleFont === "custom" && (
+                            <div className="mt-1.5">
+                              <div onClick={() => titleFontFileRef.current?.click()}
+                                className="flex items-center gap-2 px-3 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                                <span>🔤</span>
+                                <span className="text-[11px] text-[#9090a8]">
+                                  {titleCustomFontUploading ? "Enviando..." : titleCustomFontUrl ? "Fonte enviada ✓ — clique pra trocar" : "Clique pra enviar (.ttf ou .otf)"}
+                                </span>
+                              </div>
+                              <input ref={titleFontFileRef} type="file" accept=".ttf,.otf" className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadCustomFont(f, setTitleCustomFontUrl, setTitleCustomFontUploading); }} />
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
@@ -1307,6 +1323,20 @@ export default function InstagramDarkPage() {
                             style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
                             {FONT_OPTIONS.map(f => <option key={f.id} value={f.id} style={{ background: "#131318" }}>{f.label}</option>)}
                           </select>
+                          {bottomFont === "custom" && (
+                            <div className="mt-1.5">
+                              <div onClick={() => bottomFontFileRef.current?.click()}
+                                className="flex items-center gap-2 px-3 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                                <span>🔤</span>
+                                <span className="text-[11px] text-[#9090a8]">
+                                  {bottomCustomFontUploading ? "Enviando..." : bottomCustomFontUrl ? "Fonte enviada ✓ — clique pra trocar" : "Clique pra enviar (.ttf ou .otf)"}
+                                </span>
+                              </div>
+                              <input ref={bottomFontFileRef} type="file" accept=".ttf,.otf" className="hidden"
+                                onChange={e => { const f = e.target.files?.[0]; if (f) uploadCustomFont(f, setBottomCustomFontUrl, setBottomCustomFontUploading); }} />
+                            </div>
+                          )}
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
@@ -1499,7 +1529,7 @@ export default function InstagramDarkPage() {
                     <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
                       {r.status === "done" && r.final_url ? (
                         <>
-                          <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls muted />
+                          <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls />
                           <button type="button" onClick={() => downloadVideoBlob(r.final_url as string, `video-lote-${i + 1}.mp4`)}
                             className="block w-full text-center py-2 text-xs cursor-pointer border-none" style={{ background: "transparent", color: "#3ecf8e" }}>⬇️ Baixar</button>
                         </>
