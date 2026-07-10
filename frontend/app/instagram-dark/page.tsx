@@ -153,10 +153,6 @@ export default function InstagramDarkPage() {
   const [overlayOpacity, setOverlayOpacity] = useState(100);
   const overlayImageRef = useRef<HTMLInputElement>(null);
 
-  const [antiDuplication, setAntiDuplication] = useState(false);
-  const [speedVariation, setSpeedVariation] = useState(false);
-  const [mirrorVideos, setMirrorVideos] = useState(false);
-
   const [titleEnabled, setTitleEnabled] = useState(false);
   const [titleMode, setTitleMode] = useState<"texto" | "imagem">("texto");
   const [titleLinesText, setTitleLinesText] = useState("");
