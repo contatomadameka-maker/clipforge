@@ -11,6 +11,7 @@ import { getSupabase } from "@/lib/supabase";
 
 const API = "https://clipforge-6yzz.onrender.com";
 const CREDITS_PER_REEL = 25;
+const BATCH_CREDITS_PER_VIDEO = 15; // Editor em Massa — preço único, tudo incluso (bordas, título, marca, anti-dup)
 
 // Fontes disponíveis — baixadas sob demanda no backend a partir do Google
 // Fonts, exceto "sistema" (DejaVu, já incluída no repo).
@@ -231,6 +232,9 @@ export default function InstagramDarkPage() {
   const [batchError, setBatchError] = useState<string | null>(null);
   const [downloadingAll, setDownloadingAll] = useState(false);
   const [downloadAllProgress, setDownloadAllProgress] = useState({ done: 0, total: 0 });
+  const [batchInsufficientCredits, setBatchInsufficientCredits] = useState<{ needed: number; have: number } | null>(null);
+  const [showTitleModal, setShowTitleModal] = useState(false);
+  const [repeatEveryN, setRepeatEveryN] = useState(1);
 
   async function getUserId(): Promise<string> {
     const sb = getSupabase();
@@ -458,15 +462,75 @@ export default function InstagramDarkPage() {
     : batchUploads.filter(u => u.url).map(u => ({ url: u.url, key: u.id }));
   const batchVideoUrls: string[] = batchItems.map(i => i.url);
 
+  // Distribui os temas do campo principal (titleBlocks) entre os vídeos,
+  // repetindo cada tema a cada N vídeos — ex: everyN=3 com 2 temas e 9
+  // vídeos = tema 1 nos vídeos 1-3, tema 2 nos vídeos 4-6, tema 1 de novo
+  // nos vídeos 7-9. Se não tiver tema nenhum digitado, não faz nada.
+  function applyRepeatPattern(everyN: number) {
+    if (titleBlocks.length === 0) {
+      setBatchError("Digite pelo menos 1 título no campo principal antes de aplicar o padrão.");
+      return;
+    }
+    const next: Record<string, string> = { ...titleOverrides };
+    batchItems.forEach((item, idx) => {
+      const themeIndex = Math.floor(idx / Math.max(1, everyN)) % titleBlocks.length;
+      next[item.key] = titleBlocks[themeIndex];
+    });
+    setTitleOverrides(next);
+  }
+
   async function startBatchProcess() {
     if (batchVideoUrls.length === 0) {
       setBatchError(batchSource === "existing" ? "Selecione ao menos 1 Reels da lista!" : "Envie ao menos 1 vídeo!");
       return;
     }
     setBatchError(null);
+
+    const batchCost = batchVideoUrls.length * BATCH_CREDITS_PER_VIDEO;
+    const userId = await getUserId();
+    if (!userId) { setBatchError("Não foi possível identificar seu usuário. Faça login novamente."); return; }
+
+    // 1) DÉBITO — acontece ANTES de processar, igual ao resto do sistema.
+    // Cobra por vídeo PROCESSADO (não por clique em "Baixar") — baixar
+    // depois é sempre grátis, quantas vezes quiser.
+    try {
+      const debitRes = await fetch(`${API}/credits/debit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId, amount: batchCost, description: `Editor em Massa — ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""}` }),
+      });
+      if (!debitRes.ok) {
+        const err = await debitRes.json().catch(() => ({}));
+        if (debitRes.status === 402) {
+          setBatchInsufficientCredits({ needed: batchCost, have: userCredits });
+        } else {
+          setBatchError(err.detail || "Erro ao debitar créditos.");
+        }
+        return;
+      }
+      const debitData = await debitRes.json();
+      setUserCredits(debitData.balance);
+    } catch (e: any) {
+      setBatchError(`Erro ao debitar créditos: ${e.message}`);
+      return;
+    }
+
     setBatchProcessing(true);
     setBatchProgress(0);
     setBatchResults([]);
+
+    async function refundBatch(count: number, motivo: string) {
+      if (count <= 0) return;
+      try {
+        const refundRes = await fetch(`${API}/credits/refund`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_id: userId, amount: count * BATCH_CREDITS_PER_VIDEO, description: `Estorno — ${motivo}` }),
+        });
+        const refundData = await refundRes.json().catch(() => null);
+        if (refundData?.balance !== undefined) setUserCredits(refundData.balance);
+      } catch {}
+    }
 
     try {
       const res = await fetch(`${API}/batch-editor/process`, {
@@ -532,16 +596,22 @@ export default function InstagramDarkPage() {
           if (statusData.status === "done") {
             clearInterval(poll);
             setBatchProcessing(false);
+            // 2) ESTORNO — só dos vídeos que falharam, os que deram certo já foram cobrados
+            const failedCount = (statusData.videos || []).filter((v: BatchResult) => v.status === "error").length;
+            await refundBatch(failedCount, `${failedCount} vídeo${failedCount !== 1 ? "s" : ""} falhou no Editor em Massa`);
           } else if (attempts > maxAttempts) {
             clearInterval(poll);
             setBatchError("Timeout aguardando o processamento em lote.");
             setBatchProcessing(false);
+            // Timeout total — não sabemos quantos deram certo, estorna o lote inteiro por segurança
+            await refundBatch(batchVideoUrls.length, "timeout no Editor em Massa");
           }
         } catch { clearInterval(poll); setBatchProcessing(false); }
       }, 5000);
     } catch (e: any) {
       setBatchError(e.message);
       setBatchProcessing(false);
+      await refundBatch(batchVideoUrls.length, e.message);
     }
   }
 
@@ -1195,6 +1265,13 @@ export default function InstagramDarkPage() {
                               className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
                               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
                             <p className="text-[10px] text-[#55556a] mt-1">{titleBlocks.length} título{titleBlocks.length !== 1 ? "s" : ""}</p>
+                            {batchItems.length > 0 && (
+                              <button type="button" onClick={() => setShowTitleModal(true)}
+                                className="w-full mt-2 py-2 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                                style={{ background: "rgba(62,207,142,0.1)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
+                                📝 Definir título de cada vídeo individualmente ({batchItems.length} vídeo{batchItems.length !== 1 ? "s" : ""})
+                              </button>
+                            )}
                           </div>
                         ) : (
                           <div>
@@ -1490,11 +1567,19 @@ export default function InstagramDarkPage() {
 
                 {batchError && <p className="text-xs text-[#f87171]">{batchError}</p>}
 
+                {batchVideoUrls.length > 0 && (
+                  <div className="rounded-[10px] px-3.5 py-2.5 flex items-center justify-between" style={{ background: "rgba(96,165,250,0.08)", border: "0.5px solid rgba(96,165,250,0.2)" }}>
+                    <span className="text-[11px] text-[#9090a8]">{batchVideoUrls.length} vídeo{batchVideoUrls.length !== 1 ? "s" : ""} × {BATCH_CREDITS_PER_VIDEO}cr</span>
+                    <span className="text-sm font-bold text-[#60a5fa]">{batchVideoUrls.length * BATCH_CREDITS_PER_VIDEO} créditos</span>
+                  </div>
+                )}
+
                 <button type="button" onClick={startBatchProcess} disabled={batchProcessing}
                   className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
                   style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
-                  {batchProcessing ? `Processando... ${batchProgress}%` : `Processar ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""}`}
+                  {batchProcessing ? `Processando... ${batchProgress}%` : `Processar ${batchVideoUrls.length} vídeo${batchVideoUrls.length !== 1 ? "s" : ""} (${batchVideoUrls.length * BATCH_CREDITS_PER_VIDEO} cr)`}
                 </button>
+                <p className="text-[10px] text-[#55556a] text-center -mt-2">Cobra só na hora de processar — baixar depois é sempre grátis, quantas vezes quiser.</p>
               </div>
             </div>
 
@@ -1543,6 +1628,75 @@ export default function InstagramDarkPage() {
           </>
         )}
       </div>
+
+      {/* Modal de título por vídeo (Editor em Massa) */}
+      {showTitleModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }} onClick={() => setShowTitleModal(false)}>
+          <div className="rounded-2xl w-full max-w-lg mx-4 overflow-hidden max-h-[85vh] flex flex-col" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 flex-shrink-0" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <div>
+                <p className="text-sm font-bold text-[#f0f0f5]">Título de cada vídeo</p>
+                <p className="text-[10px] text-[#55556a]">{batchItems.length} vídeo{batchItems.length !== 1 ? "s" : ""} nesse lote</p>
+              </div>
+              <button onClick={() => setShowTitleModal(false)} className="w-7 h-7 rounded-lg flex items-center justify-center border-none cursor-pointer text-[#55556a]" style={{ background: "rgba(255,255,255,0.05)" }}>✕</button>
+            </div>
+
+            {titleBlocks.length > 0 && (
+              <div className="px-5 py-3 flex items-center gap-2 flex-shrink-0" style={{ borderBottom: "0.5px solid rgba(255,255,255,0.07)", background: "rgba(124,109,245,0.05)" }}>
+                <span className="text-[11px] text-[#9090a8] flex-shrink-0">Repetir tema a cada</span>
+                <select value={repeatEveryN} onChange={e => setRepeatEveryN(Number(e.target.value))}
+                  className="h-8 px-2 rounded-[6px] text-xs outline-none cursor-pointer"
+                  style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.08)", border: "0.5px solid rgba(255,255,255,0.15)" }}>
+                  {[1, 2, 3, 4, 5, 10].map(n => <option key={n} value={n} style={{ background: "#131318" }}>{n}</option>)}
+                </select>
+                <span className="text-[11px] text-[#9090a8] flex-shrink-0">vídeo{repeatEveryN !== 1 ? "s" : ""}</span>
+                <button type="button" onClick={() => applyRepeatPattern(repeatEveryN)}
+                  className="ml-auto px-3 py-1.5 rounded-[6px] text-[11px] font-medium cursor-pointer border-none flex-shrink-0"
+                  style={{ background: "#7c6df5", color: "#fff" }}>
+                  Aplicar
+                </button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-2">
+              {batchItems.map((item, idx) => {
+                const defaultTitle = titleBlocks.length > 0 ? titleBlocks[idx % titleBlocks.length] : "";
+                return (
+                  <div key={item.key} className="flex items-center gap-2">
+                    <span className="text-[10px] text-[#55556a] w-14 flex-shrink-0">Vídeo {idx + 1}</span>
+                    <input type="text" value={titleOverrides[item.key] || ""}
+                      onChange={e => setTitleOverrides(prev => ({ ...prev, [item.key]: e.target.value }))}
+                      placeholder={defaultTitle || "(sem título)"}
+                      className="flex-1 h-9 px-2.5 rounded-[6px] text-xs outline-none placeholder-[#3a3a4a]"
+                      style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="px-5 py-4 flex-shrink-0" style={{ borderTop: "0.5px solid rgba(255,255,255,0.07)" }}>
+              <p className="text-[10px] text-[#55556a] mb-2">Campo vazio usa o ciclo normal do campo principal (placeholder mostrado em cinza).</p>
+              <button type="button" onClick={() => setShowTitleModal(false)} className="w-full h-10 rounded-[8px] text-sm font-semibold cursor-pointer border-none" style={{ background: "#7c6df5", color: "#fff" }}>Concluído</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de créditos insuficientes (Editor em Massa) */}
+      {batchInsufficientCredits && (
+        <div className="fixed inset-0 flex items-center justify-center z-50" style={{ background: "rgba(0,0,0,0.7)", backdropFilter: "blur(4px)" }}>
+          <div className="rounded-2xl p-7 max-w-sm w-full mx-4" style={{ background: "#131318", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <h3 className="text-[17px] font-bold text-[#f0f0f5] text-center mb-2">Créditos insuficientes</h3>
+            <p className="text-[13px] text-[#9090a8] text-center leading-relaxed mb-5">
+              Precisa de <strong className="text-[#f87171]">{batchInsufficientCredits.needed} créditos</strong>, você tem <strong className="text-[#f0f0f5]">{batchInsufficientCredits.have}</strong>.
+            </p>
+            <div className="flex flex-col gap-2">
+              <a href="/dashboard/settings" className="w-full h-11 rounded-[10px] text-sm font-semibold flex items-center justify-center gap-2 no-underline" style={{ background: "#7c6df5", color: "#fff" }}>⚡ Recarregar créditos</a>
+              <button type="button" onClick={() => setBatchInsufficientCredits(null)} className="w-full h-10 rounded-[10px] text-sm cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal de confirmação (aba Buscar/Link) */}
       {confirmOpen && (
