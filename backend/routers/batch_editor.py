@@ -97,6 +97,17 @@ class BatchEditRequest(BaseModel):
     bottom_color: str = "#ffffff"
     bottom_font: str = "sistema"
 
+    # ── Fase 3: Overlay (marca/logotipo) — igual em todos os vídeos, pode
+    # ficar em qualquer lugar do quadro (não só topo/rodapé como Título/
+    # Inferior), com opacidade ajustável (marca d'água de verdade). ──
+    overlay_image_url: Optional[str] = None
+    overlay_position: str = "custom"  # "top_left" | "top_right" | "bottom_left" | "bottom_right" | "center" | "custom"
+    overlay_x_pct: float = 85.0       # só usado quando overlay_position="custom"
+    overlay_y_pct: float = 90.0
+    overlay_margin_px: float = 20.0   # só usado nos presets de canto (top_left, etc)
+    overlay_width_pct: float = 20.0   # largura da marca, % da largura do canvas
+    overlay_opacity_pct: float = 100.0
+
 
 async def _run(cmd: list[str]) -> tuple[int, bytes, bytes]:
     proc = await asyncio.create_subprocess_exec(
@@ -258,6 +269,57 @@ def _paste_image_block(canvas: Image.Image, img: Image.Image, x_pct: float, y_pc
     canvas.alpha_composite(resized, (px, py))
 
 
+def _resolve_overlay_position(position: str, margin_px: float, img_w_px: int, img_h_px: int) -> tuple[Optional[float], Optional[float]]:
+    """Converte um preset de canto no ponto central (x_pct, y_pct) onde a
+    marca deve ficar, já contando a margem em pixels a partir da borda do
+    canvas. Retorna (None, None) se a posição não for um preset conhecido."""
+    margin_x_pct = (margin_px / CANVAS_W) * 100
+    margin_y_pct = (margin_px / CANVAS_H) * 100
+    half_w_pct = (img_w_px / 2 / CANVAS_W) * 100
+    half_h_pct = (img_h_px / 2 / CANVAS_H) * 100
+
+    presets = {
+        "top_left": (margin_x_pct + half_w_pct, margin_y_pct + half_h_pct),
+        "top_right": (100 - margin_x_pct - half_w_pct, margin_y_pct + half_h_pct),
+        "bottom_left": (margin_x_pct + half_w_pct, 100 - margin_y_pct - half_h_pct),
+        "bottom_right": (100 - margin_x_pct - half_w_pct, 100 - margin_y_pct - half_h_pct),
+        "center": (50.0, 50.0),
+    }
+    return presets.get(position, (None, None))
+
+
+async def _apply_overlay_mark(client: httpx.AsyncClient, img: Image.Image, req: BatchEditRequest) -> None:
+    """Cola a marca/logo (Fase 3) por cima do PNG de overlay já montado —
+    igual em todos os vídeos, com opacidade e posição configuráveis. Pode
+    ficar em qualquer canto ou ponto do quadro, diferente de Título/
+    Inferior que ficam restritos à faixa de cima/baixo."""
+    if not req.overlay_image_url:
+        return
+    mark = await _fetch_image(client, req.overlay_image_url)
+    if not mark:
+        return
+
+    # Opacidade — multiplica o canal alfa existente (preserva transparência
+    # já presente num PNG, por ex. um logo já recortado).
+    opacity = max(0.0, min(req.overlay_opacity_pct, 100.0)) / 100.0
+    if opacity < 1.0:
+        alpha = mark.split()[-1].point(lambda p: int(p * opacity))
+        mark.putalpha(alpha)
+
+    target_w = max(10, int(CANVAS_W * req.overlay_width_pct / 100))
+    ratio = target_w / mark.width
+    target_h = max(10, int(mark.height * ratio))
+
+    if req.overlay_position == "custom":
+        x_pct, y_pct = req.overlay_x_pct, req.overlay_y_pct
+    else:
+        x_pct, y_pct = _resolve_overlay_position(req.overlay_position, req.overlay_margin_px, target_w, target_h)
+        if x_pct is None:
+            x_pct, y_pct = req.overlay_x_pct, req.overlay_y_pct
+
+    _paste_image_block(img, mark, x_pct, y_pct, req.overlay_width_pct)
+
+
 def _cropped_source_dims(src_w: int, src_h: int, req: BatchEditRequest) -> tuple[int, int]:
     """Dimensões do vídeo DEPOIS do corte manual de topo/rodapé (fill_top/
     fill_bottom), mas ANTES de qualquer escala/zoom. Usado tanto no cálculo
@@ -348,8 +410,9 @@ async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[st
     has_title_image = bool(req.title_image_url)
     has_bottom_text = bool(req.bottom_text and req.bottom_text.strip())
     has_bottom_image = bool(req.bottom_image_url)
+    has_overlay_mark = bool(req.overlay_image_url)
 
-    if not any([has_title_text, has_title_image, has_bottom_text, has_bottom_image]):
+    if not any([has_title_text, has_title_image, has_bottom_text, has_bottom_image, has_overlay_mark]):
         return None
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
@@ -371,6 +434,11 @@ async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[st
     elif has_bottom_text:
         bottom_font_path = await _ensure_font_downloaded(client, req.bottom_font)
         _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color, bottom_font_path)
+
+    # Overlay/marca (Fase 3) — sempre por cima do título/inferior, já que é
+    # tipicamente um logo/marca-d'água que deve ficar visível acima de tudo.
+    if has_overlay_mark:
+        await _apply_overlay_mark(client, img, req)
 
     buf = BytesIO()
     img.save(buf, format="PNG")
