@@ -38,36 +38,34 @@ const FONT_CSS_FAMILY: Record<string, string> = {
   bebas_neue: "'Bebas Neue', sans-serif",
 };
 
-// Download forçado via blob — necessário porque o atributo `download` do
-// <a> é IGNORADO pelo navegador quando o arquivo é de outro domínio (aqui,
-// R2 vs a própria página no Vercel). Sem isso, clicar só abre o vídeo em
-// vez de baixar.
-async function downloadVideoBlob(url: string, filename: string) {
-  try {
-    const res = await fetch(url);
-    const blob = await res.blob();
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = blobUrl;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(blobUrl);
-  } catch {
-    // Fallback: se o fetch falhar (ex: CORS bloqueado na origem), abre em nova aba
-    window.open(url, "_blank");
-  }
+// Download forçado via PROXY DO BACKEND — o atributo `download` do <a> só
+// é respeitado pelo navegador quando o arquivo é do MESMO domínio da
+// página. Como o vídeo está no R2 (domínio diferente do Vercel), um link
+// direto só abre o vídeo numa aba em vez de baixar. A correção: o backend
+// busca o arquivo por trás e devolve com Content-Disposition: attachment,
+// que força o download de verdade não importa a origem — e como não
+// depende de `fetch()` lendo a resposta no navegador, também não esbarra
+// em bloqueio de CORS (que era o motivo do fallback antigo abrir uma aba
+// nova em vez de baixar).
+function downloadVideoBlob(url: string, filename: string) {
+  const proxyUrl = `${API}/storage/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(filename)}`;
+  const a = document.createElement("a");
+  a.href = proxyUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 // Baixa vários vídeos em sequência, com um pequeno intervalo entre eles —
-// baixar tudo ao mesmo tempo pode fazer o navegador bloquear downloads
-// múltiplos automáticos (proteção anti-spam do próprio Chrome/Firefox).
+// baixar tudo ao mesmo tempo pode fazer o navegador pedir confirmação
+// ("Este site quer baixar vários arquivos") ou bloquear como proteção
+// anti-spam do próprio Chrome/Firefox.
 async function downloadAllBlobs(items: { url: string; filename: string }[], onProgress?: (done: number, total: number) => void) {
   for (let i = 0; i < items.length; i++) {
-    await downloadVideoBlob(items[i].url, items[i].filename);
+    downloadVideoBlob(items[i].url, items[i].filename);
     onProgress?.(i + 1, items.length);
-    await new Promise(r => setTimeout(r, 400));
+    await new Promise(r => setTimeout(r, 600));
   }
 }
 
@@ -917,7 +915,7 @@ export default function InstagramDarkPage() {
         ═══════════════════════════════════════════════════════════ */}
         {tab === "lote" && (
           <>
-            <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_320px] gap-5 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr_380px] gap-5 items-start">
 
               {/* ── Coluna esquerda: origem + lista de vídeos ── */}
               <div className="rounded-2xl p-4 flex flex-col gap-3" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
@@ -1142,7 +1140,7 @@ export default function InstagramDarkPage() {
                 <div className="flex gap-1 p-1 rounded-[10px] flex-wrap" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
                   {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }, { id: "sobreposicao", label: "Marca" }, { id: "antiduplicacao", label: "Anti-dup" }].map(t => (
                     <button key={t.id} type="button" onClick={() => setConfigTab(t.id as any)}
-                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
+                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[10px] font-medium cursor-pointer border-none transition-all whitespace-nowrap"
                       style={configTab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
                       {t.label}
                     </button>
