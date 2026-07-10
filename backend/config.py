@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     cakto_webhook_secret: str = ""
     hikerapi_key: str = ""
     tikhub_api_key: str = ""
+    apify_api_token: str = ""
     class Config:
         env_file = ".env"
         extra = "allow"
