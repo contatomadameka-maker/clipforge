@@ -22,6 +22,7 @@ const FONT_OPTIONS: { id: string; label: string }[] = [
   { id: "oswald", label: "Oswald" },
   { id: "anton", label: "Anton" },
   { id: "bebas_neue", label: "Bebas Neue" },
+  { id: "custom", label: "🎨 Fonte personalizada (.ttf/.otf)" },
 ];
 
 // Nome CSS de cada fonte, pra aplicar na PRÉVIA (o vídeo final usa a fonte
@@ -135,7 +136,11 @@ export default function InstagramDarkPage() {
   const [borderMode, setBorderMode] = useState<"manual" | "automatico">("manual");
   const [borderTargetPct, setBorderTargetPct] = useState(10);
 
-  const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior" | "sobreposicao">("bordas");
+  const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior" | "sobreposicao" | "antiduplicacao">("bordas");
+
+  const [antiDuplication, setAntiDuplication] = useState(false);
+  const [speedVariation, setSpeedVariation] = useState(false);
+  const [mirrorVideos, setMirrorVideos] = useState(false);
 
   const [overlayEnabled, setOverlayEnabled] = useState(false);
   const [overlayImageUrl, setOverlayImageUrl] = useState("");
@@ -147,6 +152,10 @@ export default function InstagramDarkPage() {
   const [overlayWidth, setOverlayWidth] = useState(20);
   const [overlayOpacity, setOverlayOpacity] = useState(100);
   const overlayImageRef = useRef<HTMLInputElement>(null);
+
+  const [antiDuplication, setAntiDuplication] = useState(false);
+  const [speedVariation, setSpeedVariation] = useState(false);
+  const [mirrorVideos, setMirrorVideos] = useState(false);
 
   const [titleEnabled, setTitleEnabled] = useState(false);
   const [titleMode, setTitleMode] = useState<"texto" | "imagem">("texto");
@@ -163,7 +172,10 @@ export default function InstagramDarkPage() {
   const [titleFontSize, setTitleFontSize] = useState(6);
   const [titleColor, setTitleColor] = useState("#ffffff");
   const [titleFont, setTitleFont] = useState("sistema");
+  const [titleCustomFontUrl, setTitleCustomFontUrl] = useState("");
+  const [titleCustomFontUploading, setTitleCustomFontUploading] = useState(false);
   const titleImageRef = useRef<HTMLInputElement>(null);
+  const titleFontFileRef = useRef<HTMLInputElement>(null);
 
   // Título ESPECÍFICO por vídeo — sobrepõe o ciclo de title_lines só pra
   // aquele vídeo. Guardado por chave (media_id do Reels, ou id do upload).
@@ -180,7 +192,10 @@ export default function InstagramDarkPage() {
   const [bottomFontSize, setBottomFontSize] = useState(4.5);
   const [bottomColor, setBottomColor] = useState("#ffffff");
   const [bottomFont, setBottomFont] = useState("sistema");
+  const [bottomCustomFontUrl, setBottomCustomFontUrl] = useState("");
+  const [bottomCustomFontUploading, setBottomCustomFontUploading] = useState(false);
   const bottomImageRef = useRef<HTMLInputElement>(null);
+  const bottomFontFileRef = useRef<HTMLInputElement>(null);
 
   async function uploadOverlayImage(file: File, onDone: (url: string) => void, setUploading: (v: boolean) => void) {
     setUploading(true);
@@ -193,6 +208,22 @@ export default function InstagramDarkPage() {
       onDone(data.url);
     } catch {
       setBatchError("Falha ao enviar a imagem.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function uploadCustomFont(file: File, onDone: (url: string) => void, setUploading: (v: boolean) => void) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API}/storage/upload/font`, { method: "POST", body: fd });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Falha ao enviar a fonte"); }
+      const data = await res.json();
+      onDone(data.url);
+    } catch (e: any) {
+      setBatchError(e.message || "Falha ao enviar a fonte (use .ttf ou .otf).");
     } finally {
       setUploading(false);
     }
@@ -235,6 +266,25 @@ export default function InstagramDarkPage() {
     link.href = "https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Montserrat:wght@700&family=Oswald:wght@700&family=Poppins:wght@700&family=Raleway:wght@700&display=swap";
     document.head.appendChild(link);
   }, []);
+
+  // Carrega as fontes PERSONALIZADAS (enviadas pelo usuário) via FontFace
+  // API assim que a URL fica disponível — sem isso a prévia não sabe usar
+  // um arquivo de fonte hospedado dinamicamente no R2.
+  useEffect(() => {
+    if (!titleCustomFontUrl) return;
+    const font = new FontFace("IGDarkTitleCustom", `url(${titleCustomFontUrl})`);
+    font.load().then(loaded => { (document as any).fonts.add(loaded); }).catch(() => {
+      setBatchError("Não consegui carregar essa fonte personalizada na prévia (o vídeo final pode funcionar mesmo assim).");
+    });
+  }, [titleCustomFontUrl]);
+
+  useEffect(() => {
+    if (!bottomCustomFontUrl) return;
+    const font = new FontFace("IGDarkBottomCustom", `url(${bottomCustomFontUrl})`);
+    font.load().then(loaded => { (document as any).fonts.add(loaded); }).catch(() => {
+      setBatchError("Não consegui carregar essa fonte personalizada na prévia (o vídeo final pode funcionar mesmo assim).");
+    });
+  }, [bottomCustomFontUrl]);
 
   async function uploadFile(file: File, onDone: (url: string) => void) {
     const fd = new FormData();
@@ -459,6 +509,9 @@ export default function InstagramDarkPage() {
           overlay_margin_px: overlayMargin,
           overlay_width_pct: overlayWidth,
           overlay_opacity_pct: overlayOpacity,
+          anti_duplication: antiDuplication,
+          speed_variation: speedVariation,
+          mirror_videos: mirrorVideos,
         }),
       });
       if (!res.ok) {
@@ -941,9 +994,7 @@ export default function InstagramDarkPage() {
                       <video
                         key={effectivePreviewUrl}
                         src={effectivePreviewUrl}
-                        autoPlay
                         loop
-                        muted
                         playsInline
                         controls
                         className="absolute inset-0 w-full h-full object-contain"
@@ -971,7 +1022,7 @@ export default function InstagramDarkPage() {
                         style={{
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
                           color: titleColor, fontSize: `${titleFontSize * 3.6}px`,
-                          fontFamily: FONT_CSS_FAMILY[titleFont] || "inherit",
+                          fontFamily: titleFont === "custom" ? "'IGDarkTitleCustom', sans-serif" : (FONT_CSS_FAMILY[titleFont] || "inherit"),
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
@@ -989,7 +1040,7 @@ export default function InstagramDarkPage() {
                         style={{
                           left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)",
                           color: bottomColor, fontSize: `${bottomFontSize * 3.6}px`,
-                          fontFamily: FONT_CSS_FAMILY[bottomFont] || "inherit",
+                          fontFamily: bottomFont === "custom" ? "'IGDarkBottomCustom', sans-serif" : (FONT_CSS_FAMILY[bottomFont] || "inherit"),
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
@@ -1021,7 +1072,7 @@ export default function InstagramDarkPage() {
               {/* ── Coluna direita: config (Bordas / Título / Inferior) ── */}
               <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
                 <div className="flex gap-1 p-1 rounded-[10px] flex-wrap" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                  {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }, { id: "sobreposicao", label: "Marca" }].map(t => (
+                  {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }, { id: "sobreposicao", label: "Marca" }, { id: "antiduplicacao", label: "Anti-dup" }].map(t => (
                     <button key={t.id} type="button" onClick={() => setConfigTab(t.id as any)}
                       className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
                       style={configTab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
@@ -1364,6 +1415,50 @@ export default function InstagramDarkPage() {
                         </div>
                       </>
                     )}
+                  </>
+                )}
+
+                {configTab === "antiduplicacao" && (
+                  <>
+                    <p className="text-[11px] text-[#55556a] leading-relaxed">
+                      Cada opção abaixo aplica uma variação <strong>aleatória e diferente em cada vídeo</strong> do lote — mesmo vindo da mesma fonte, cada resultado fica com uma "assinatura" própria, o que ajuda a reduzir detecção de conteúdo duplicado entre posts/contas.
+                    </p>
+
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-[8px]" style={{ background: "rgba(255,255,255,0.03)" }}>
+                      <div>
+                        <p className="text-xs font-medium text-[#f0f0f5]">Variação de zoom e cor</p>
+                        <p className="text-[10px] text-[#55556a] mt-0.5">Zoom (até 2,5%), brilho, contraste e saturação levemente diferentes por vídeo</p>
+                      </div>
+                      <button type="button" onClick={() => setAntiDuplication(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0 ml-3"
+                        style={{ background: antiDuplication ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: antiDuplication ? "18px" : "2px" }} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-[8px]" style={{ background: "rgba(255,255,255,0.03)" }}>
+                      <div>
+                        <p className="text-xs font-medium text-[#f0f0f5]">Variação de velocidade</p>
+                        <p className="text-[10px] text-[#55556a] mt-0.5">~1.02x mais rápido (vídeo + áudio sincronizados)</p>
+                      </div>
+                      <button type="button" onClick={() => setSpeedVariation(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0 ml-3"
+                        style={{ background: speedVariation ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: speedVariation ? "18px" : "2px" }} />
+                      </button>
+                    </div>
+
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-[8px]" style={{ background: "rgba(255,255,255,0.03)" }}>
+                      <div>
+                        <p className="text-xs font-medium text-[#f0f0f5]">Espelhar vídeos</p>
+                        <p className="text-[10px] text-[#55556a] mt-0.5">Inverte horizontalmente — cuidado: também inverte texto/logo já embutido no vídeo original</p>
+                      </div>
+                      <button type="button" onClick={() => setMirrorVideos(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0 ml-3"
+                        style={{ background: mirrorVideos ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: mirrorVideos ? "18px" : "2px" }} />
+                      </button>
+                    </div>
                   </>
                 )}
 
