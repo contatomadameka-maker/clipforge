@@ -463,12 +463,32 @@ export default function InstagramDarkPage() {
       <div className="relative z-10 p-6 max-w-4xl mx-auto flex flex-col gap-6">
 
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold mb-1">🌙 Instagram Dark</h1>
-            <p className="text-sm text-[#9090a8]">Baixe Reels e monte com faixa + marca d'água nova.</p>
+          <div className="flex items-center gap-3.5">
+            <div className="relative w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0"
+              style={{ background: "conic-gradient(from 220deg, #833AB4, #FD1D1D, #F77737, #FCAF45, #833AB4)", boxShadow: "0 6px 20px rgba(253,29,29,0.35)" }}>
+              <div className="w-[calc(100%-4px)] h-[calc(100%-4px)] rounded-[14px] flex items-center justify-center" style={{ background: "#0a0a0f" }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+                  <path d="M12 3c-3 2.2-4.8 5.3-4.8 9 0 5 4 9 8.8 9-3.6 1.3-7.8.4-10.5-2.6C1.8 14.4 2 9 5.5 5.4 7.4 3.5 9.7 2.6 12 3z" fill="url(#igMoonGrad)" />
+                  <circle cx="16.5" cy="7" r="1.4" fill="#FCAF45" />
+                  <defs>
+                    <linearGradient id="igMoonGrad" x1="2" y1="3" x2="17" y2="21" gradientUnits="userSpaceOnUse">
+                      <stop stopColor="#F77737" /><stop offset="1" stopColor="#833AB4" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+            </div>
+            <div>
+              <h1 className="text-2xl font-extrabold tracking-tight mb-0.5" style={{
+                background: "linear-gradient(90deg, #F77737, #FD1D1D, #833AB4)",
+                WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", backgroundClip: "text",
+              }}>Instagram Dark</h1>
+              <p className="text-sm text-[#8a8aa0]">Baixe Reels e monte com faixa, texto e marca d'água — em lote.</p>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 text-xs text-[#9090a8] px-3 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <span className="font-semibold text-[#f0f0f5]">{userCredits.toLocaleString()}</span> créditos
+          <div className="flex items-center gap-1.5 text-xs px-3.5 py-2 rounded-xl" style={{ background: "rgba(252,175,69,0.1)", border: "0.5px solid rgba(252,175,69,0.3)" }}>
+            <span className="font-bold text-[15px]" style={{ color: "#FCAF45" }}>{userCredits.toLocaleString()}</span>
+            <span className="text-[#c9a56a]">créditos</span>
           </div>
         </div>
 
@@ -480,13 +500,19 @@ export default function InstagramDarkPage() {
           </p>
         </div>
 
-        {/* Abas */}
-        <div className="flex gap-1 p-1 rounded-[10px] w-fit" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-          {[{ id: "perfil", label: "🔍 Buscar por perfil" }, { id: "link", label: "🔗 Link de um Reels" }, { id: "lote", label: "🎛️ Editor em Massa" }].map(t => (
+        {/* Abas — cada uma com identidade de cor própria */}
+        <div className="flex gap-2.5 flex-wrap">
+          {[
+            { id: "perfil", label: "Buscar por perfil", icon: "🔍", grad: "linear-gradient(135deg,#833AB4,#5851DB)", glow: "rgba(131,58,180,0.35)" },
+            { id: "link", label: "Link de um Reels", icon: "🔗", grad: "linear-gradient(135deg,#5B51D8,#3897F0)", glow: "rgba(56,151,240,0.35)" },
+            { id: "lote", label: "Editor em Massa", icon: "🎛️", grad: "linear-gradient(135deg,#FD1D1D,#F77737)", glow: "rgba(247,119,55,0.35)" },
+          ].map(t => (
             <button key={t.id} type="button" onClick={() => setTab(t.id as any)}
-              className="px-4 py-2 rounded-[8px] text-sm font-medium cursor-pointer border-none transition-all"
-              style={tab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-              {t.label}
+              className="px-5 py-3 rounded-2xl text-sm font-semibold cursor-pointer border-none transition-all flex items-center gap-2"
+              style={tab === t.id
+                ? { background: t.grad, color: "#fff", boxShadow: `0 6px 18px ${t.glow}`, transform: "translateY(-1px)" }
+                : { background: "rgba(255,255,255,0.04)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.09)" }}>
+              <span>{t.icon}</span> {t.label}
             </button>
           ))}
         </div>
@@ -808,7 +834,7 @@ export default function InstagramDarkPage() {
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
                           color: titleColor, fontSize: `${titleFontSize * 3.6}px`,
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
-                          maxWidth: "90%", lineHeight: 1.25,
+                          whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
                         {titleLinesText.split("\n").find(l => l.trim())}
                       </div>
@@ -825,7 +851,7 @@ export default function InstagramDarkPage() {
                           left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)",
                           color: bottomColor, fontSize: `${bottomFontSize * 3.6}px`,
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
-                          maxWidth: "90%", lineHeight: 1.25,
+                          whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
                         {bottomText}
                       </div>
