@@ -59,7 +59,7 @@ async def list_videos(page_url: str, limit: int = 20):
         raise HTTPException(status_code=503, detail="APIFY_API_TOKEN não configurado ainda no backend.")
 
     payload = {
-        "startUrls": [{"url": page_url.strip()}],
+        "urls": [page_url.strip()],
         "resultsLimit": max(1, min(limit, 100)),
     }
 
