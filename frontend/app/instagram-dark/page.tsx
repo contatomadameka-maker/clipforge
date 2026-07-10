@@ -73,6 +73,22 @@ export default function InstagramDarkPage() {
   const [fillTop, setFillTop] = useState(12);
   const [fillBottom, setFillBottom] = useState(12);
 
+  const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior">("bordas");
+
+  const [titleEnabled, setTitleEnabled] = useState(false);
+  const [titleLinesText, setTitleLinesText] = useState("");
+  const [titleX, setTitleX] = useState(50);
+  const [titleY, setTitleY] = useState(12);
+  const [titleFontSize, setTitleFontSize] = useState(6);
+  const [titleColor, setTitleColor] = useState("#ffffff");
+
+  const [bottomEnabled, setBottomEnabled] = useState(false);
+  const [bottomText, setBottomText] = useState("");
+  const [bottomX, setBottomX] = useState(50);
+  const [bottomY, setBottomY] = useState(88);
+  const [bottomFontSize, setBottomFontSize] = useState(4.5);
+  const [bottomColor, setBottomColor] = useState("#ffffff");
+
   const [batchProcessing, setBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0);
   const [batchResults, setBatchResults] = useState<BatchResult[]>([]);
@@ -294,6 +310,16 @@ export default function InstagramDarkPage() {
           fill_top_pct: fillTop,
           fill_bottom_pct: fillBottom,
           fill_mode: fillMode,
+          title_lines: titleEnabled ? titleLinesText.split("\n").map(l => l.trim()).filter(Boolean) : [],
+          title_x_pct: titleX,
+          title_y_pct: titleY,
+          title_font_size_pct: titleFontSize,
+          title_color: titleColor,
+          bottom_text: bottomEnabled && bottomText.trim() ? bottomText.trim() : null,
+          bottom_x_pct: bottomX,
+          bottom_y_pct: bottomY,
+          bottom_font_size_pct: bottomFontSize,
+          bottom_color: bottomColor,
         }),
       });
       if (!res.ok) {
@@ -705,6 +731,32 @@ export default function InstagramDarkPage() {
                         Selecione ou envie um vídeo pra ver a prévia
                       </div>
                     )}
+
+                    {/* Prévia do título (primeira linha cadastrada) */}
+                    {titleEnabled && titleLinesText.split("\n").find(l => l.trim()) && (
+                      <div className="absolute px-2 text-center font-bold pointer-events-none"
+                        style={{
+                          left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
+                          color: titleColor, fontSize: `${titleFontSize * 3.6}px`,
+                          textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
+                          maxWidth: "90%", lineHeight: 1.25,
+                        }}>
+                        {titleLinesText.split("\n").find(l => l.trim())}
+                      </div>
+                    )}
+
+                    {/* Prévia do texto inferior */}
+                    {bottomEnabled && bottomText.trim() && (
+                      <div className="absolute px-2 text-center font-bold pointer-events-none"
+                        style={{
+                          left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)",
+                          color: bottomColor, fontSize: `${bottomFontSize * 3.6}px`,
+                          textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
+                          maxWidth: "90%", lineHeight: 1.25,
+                        }}>
+                        {bottomText}
+                      </div>
+                    )}
                   </div>
                 </div>
                 <p className="text-[11px] text-[#55556a] text-center max-w-xs">
@@ -714,60 +766,161 @@ export default function InstagramDarkPage() {
                 </p>
               </div>
 
-              {/* ── Coluna direita: config de enquadramento ── */}
+              {/* ── Coluna direita: config (Bordas / Título / Inferior) ── */}
               <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                <p className="text-sm font-semibold">🎛️ Enquadramento</p>
-
-                <div>
-                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
-                  <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
-                  <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição vertical: {posY}%</label>
-                  <input type="range" min={0} max={100} value={posY} onChange={e => setPosY(Number(e.target.value))} className="w-full" />
-                </div>
-                <div>
-                  <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor das bordas</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={borderColor} onChange={e => setBorderColor(e.target.value)}
-                      className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                    <span className="text-xs text-[#9090a8]">{borderColor}</span>
-                  </div>
-                </div>
-
-                <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
-
-                <div>
-                  <p className="text-xs font-medium text-[#9090a8] mb-2">Corte do original (remove legenda/marca queimada)</p>
-                  <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                    <button type="button" onClick={() => setFillMode("manual")}
-                      className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
-                      style={fillMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-                      Manual
+                <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }].map(t => (
+                    <button key={t.id} type="button" onClick={() => setConfigTab(t.id as any)}
+                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
+                      style={configTab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                      {t.label}
                     </button>
-                    <button type="button" onClick={() => setFillMode("automatico")}
-                      className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none flex items-center gap-1"
-                      style={fillMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
-                      Automático
-                      <span className="text-[8px] px-1 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}>em breve</span>
-                    </button>
-                  </div>
-                  <div className="flex flex-col gap-3">
+                  ))}
+                </div>
+
+                {configTab === "bordas" && (
+                  <>
                     <div>
-                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Topo: {fillTop}%</label>
-                      <input type="range" min={0} max={45} value={fillTop} onChange={e => setFillTop(Number(e.target.value))} className="w-full" />
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
+                      <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
                     </div>
                     <div>
-                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Rodapé: {fillBottom}%</label>
-                      <input type="range" min={0} max={45} value={fillBottom} onChange={e => setFillBottom(Number(e.target.value))} className="w-full" />
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
+                      <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
                     </div>
-                  </div>
-                  <p className="text-[10px] text-[#55556a] mt-2">Conteúdo central restante: {100 - fillTop - fillBottom}%</p>
-                </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição vertical: {posY}%</label>
+                      <input type="range" min={0} max={100} value={posY} onChange={e => setPosY(Number(e.target.value))} className="w-full" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor das bordas</label>
+                      <div className="flex items-center gap-2">
+                        <input type="color" value={borderColor} onChange={e => setBorderColor(e.target.value)}
+                          className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                        <span className="text-xs text-[#9090a8]">{borderColor}</span>
+                      </div>
+                    </div>
+
+                    <div className="h-px" style={{ background: "rgba(255,255,255,0.07)" }} />
+
+                    <div>
+                      <p className="text-xs font-medium text-[#9090a8] mb-2">Corte do original (remove legenda/marca queimada)</p>
+                      <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                        <button type="button" onClick={() => setFillMode("manual")}
+                          className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                          style={fillMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                          Manual
+                        </button>
+                        <button type="button" onClick={() => setFillMode("automatico")}
+                          className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none flex items-center gap-1"
+                          style={fillMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                          Automático
+                          <span className="text-[8px] px-1 py-0.5 rounded" style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}>em breve</span>
+                        </button>
+                      </div>
+                      <div className="flex flex-col gap-3">
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Topo: {fillTop}%</label>
+                          <input type="range" min={0} max={45} value={fillTop} onChange={e => setFillTop(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Rodapé: {fillBottom}%</label>
+                          <input type="range" min={0} max={45} value={fillBottom} onChange={e => setFillBottom(Number(e.target.value))} className="w-full" />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-[#55556a] mt-2">Conteúdo central restante: {100 - fillTop - fillBottom}%</p>
+                    </div>
+                  </>
+                )}
+
+                {configTab === "titulo" && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#9090a8]">Título no vídeo</label>
+                      <button type="button" onClick={() => setTitleEnabled(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0"
+                        style={{ background: titleEnabled ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: titleEnabled ? "18px" : "2px" }} />
+                      </button>
+                    </div>
+                    {titleEnabled && (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Um título por linha (cicla se houver mais vídeos)</label>
+                          <textarea value={titleLinesText} onChange={e => setTitleLinesText(e.target.value)}
+                            placeholder={"esse vídeo fica mais tenso a cada segundo\neu não esperava por esse final"} rows={5}
+                            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+                          <p className="text-[10px] text-[#55556a] mt-1">{titleLinesText.split("\n").filter(l => l.trim()).length} título{titleLinesText.split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""}</p>
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tamanho: {titleFontSize}%</label>
+                          <input type="range" min={2} max={12} step={0.5} value={titleFontSize} onChange={e => setTitleFontSize(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {titleX}%</label>
+                          <input type="range" min={0} max={100} value={titleX} onChange={e => setTitleX(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição Y: {titleY}%</label>
+                          <input type="range" min={0} max={100} value={titleY} onChange={e => setTitleY(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
+                          <div className="flex items-center gap-2">
+                            <input type="color" value={titleColor} onChange={e => setTitleColor(e.target.value)}
+                              className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                            <span className="text-xs text-[#9090a8]">{titleColor}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {configTab === "inferior" && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#9090a8]">Texto inferior (igual em todos)</label>
+                      <button type="button" onClick={() => setBottomEnabled(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0"
+                        style={{ background: bottomEnabled ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: bottomEnabled ? "18px" : "2px" }} />
+                      </button>
+                    </div>
+                    {bottomEnabled && (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Texto</label>
+                          <textarea value={bottomText} onChange={e => setBottomText(e.target.value)}
+                            placeholder="Texto exibido em todos os vídeos" rows={3}
+                            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tamanho: {bottomFontSize}%</label>
+                          <input type="range" min={2} max={12} step={0.5} value={bottomFontSize} onChange={e => setBottomFontSize(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {bottomX}%</label>
+                          <input type="range" min={0} max={100} value={bottomX} onChange={e => setBottomX(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição Y: {bottomY}%</label>
+                          <input type="range" min={0} max={100} value={bottomY} onChange={e => setBottomY(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
+                          <div className="flex items-center gap-2">
+                            <input type="color" value={bottomColor} onChange={e => setBottomColor(e.target.value)}
+                              className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                            <span className="text-xs text-[#9090a8]">{bottomColor}</span>
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
 
                 {batchError && <p className="text-xs text-[#f87171]">{batchError}</p>}
 
