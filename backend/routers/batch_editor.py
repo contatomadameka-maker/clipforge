@@ -1,14 +1,13 @@
 # ─────────────────────────────────────────────────────────────
 # backend/routers/batch_editor.py
-# Editor em Massa (Instagram Dark) — Fase 1: Bordas/Enquadramento.
+# Editor em Massa (Instagram Dark) — Bordas/Enquadramento, Título,
+# Texto inferior, Overlay/marca-d'água e Modo anti-duplicidade.
 # Recebe uma lista de vídeos (já no R2, sejam de Reels selecionados
-# ou upload novo) + UMA config única de zoom/posição/cor/corte, e
-# aplica a MESMA edição em todos. Se o usuário quiser um vídeo
-# diferente, ele processa separado (1 vídeo por vez) — decisão
-# tomada de propósito pra manter a v1 simples.
-#
-# Fases futuras (não implementadas ainda): Título, Texto inferior,
-# Overlay/marca d'água, Modo anti-duplicidade.
+# ou upload novo) + UMA config única, e aplica a MESMA edição em
+# todos (exceto anti-duplicidade, que gera variação própria por
+# vídeo de propósito). Se o usuário quiser um vídeo diferente, ele
+# processa separado (1 vídeo por vez) — decisão tomada pra manter
+# a v1 simples.
 # ─────────────────────────────────────────────────────────────
 
 import asyncio
@@ -88,7 +87,8 @@ class BatchEditRequest(BaseModel):
     title_y_pct: float = 12.0
     title_font_size_pct: float = 6.0   # também usado como LARGURA da imagem (% do canvas) quando title_image_url está setado
     title_color: str = "#ffffff"
-    title_font: str = "sistema"        # chave de FONT_SOURCES, ou "sistema" pra DejaVu (padrão)
+    title_font: str = "sistema"        # chave de FONT_SOURCES, ou "sistema" pra DejaVu (padrão), ou "custom"
+    title_font_url: Optional[str] = None  # usado quando title_font="custom" — URL da fonte enviada pelo usuário
 
     bottom_text: Optional[str] = None  # mesmo texto em TODOS os vídeos do lote
     bottom_image_url: Optional[str] = None
@@ -97,6 +97,7 @@ class BatchEditRequest(BaseModel):
     bottom_font_size_pct: float = 4.5  # também usado como LARGURA da imagem quando bottom_image_url está setado
     bottom_color: str = "#ffffff"
     bottom_font: str = "sistema"
+    bottom_font_url: Optional[str] = None
 
     # ── Fase 3: Overlay (marca/logotipo) — igual em todos os vídeos, pode
     # ficar em qualquer lugar do quadro (não só topo/rodapé como Título/
@@ -109,11 +110,14 @@ class BatchEditRequest(BaseModel):
     overlay_width_pct: float = 20.0   # largura da marca, % da largura do canvas
     overlay_opacity_pct: float = 100.0
 
-    # ── Fase 4: Anti-duplicação ──
-    # Cada um é independente — pode ligar só um, todos, ou nenhum.
+    # ── Fase 4: Modo anti-duplicidade — aplica pequenas variações
+    # ALEATÓRIAS e DIFERENTES EM CADA VÍDEO (velocidade, espelhamento,
+    # micro-zoom, cor), pra reduzir a chance de detecção de conteúdo
+    # duplicado entre posts/contas. Cada opção é independente — liga só
+    # uma, todas, ou nenhuma.
     anti_duplication: bool = False  # zoom/cor levemente diferentes, ÚNICOS por vídeo (mesmo vindo da mesma fonte)
     speed_variation: bool = False   # aplica ~1.02x de velocidade (vídeo + áudio)
-    mirror_videos: bool = False     # espelha horizontalmente (efeito espelho)
+    mirror_videos: bool = False     # espelha horizontalmente (efeito espelho) — desligado por padrão: inverte texto/logo já embutido no vídeo
 
 
 async def _run(cmd: list[str]) -> tuple[int, bytes, bytes]:
@@ -458,7 +462,7 @@ async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[st
         if title_img:
             _paste_image_block(img, title_img, req.title_x_pct, req.title_y_pct, req.title_font_size_pct)
     elif has_title_text:
-        title_font_path = await _ensure_font_downloaded(client, req.title_font)
+        title_font_path = await _ensure_font_downloaded(client, req.title_font_url or req.title_font)
         _draw_text_block(draw, title_text or "", req.title_x_pct, req.title_y_pct, req.title_font_size_pct, req.title_color, title_font_path)
 
     if has_bottom_image:
@@ -466,7 +470,7 @@ async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[st
         if bottom_img:
             _paste_image_block(img, bottom_img, req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct)
     elif has_bottom_text:
-        bottom_font_path = await _ensure_font_downloaded(client, req.bottom_font)
+        bottom_font_path = await _ensure_font_downloaded(client, req.bottom_font_url or req.bottom_font)
         _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color, bottom_font_path)
 
     # Overlay/marca (Fase 3) — sempre por cima do título/inferior, já que é
