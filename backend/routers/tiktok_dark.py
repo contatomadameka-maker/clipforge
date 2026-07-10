@@ -22,6 +22,7 @@ import httpx
 import re
 import json
 import logging
+from urllib.parse import urlsplit, urlunsplit
 
 router = APIRouter()
 settings = get_settings()
@@ -151,6 +152,14 @@ async def video_by_url(url: str):
                 clean_url = resolved
             except Exception as e:
                 logger.warning(f"[tiktok-dark] falha ao resolver link curto ({e}) — segue com o original")
+
+        # Remove parâmetros de rastreamento (?_r=1&_t=... que o TikTok gruda
+        # automaticamente no link) — a API parece não reconhecer o vídeo
+        # direito com esse "lixo" a mais na URL, mesmo respondendo "sucesso"
+        # (retorna data vazio em vez de erro claro).
+        parts = urlsplit(clean_url)
+        clean_url = urlunsplit((parts.scheme, parts.netloc, parts.path, "", ""))
+        logger.info(f"[tiktok-dark] URL limpa (sem query string): {clean_url}")
 
         res = await client.get(
             f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_one_video_by_share_url",
