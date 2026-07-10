@@ -3,12 +3,14 @@
 # Upload de arquivos para Cloudflare R2
 # ─────────────────────────────────────────────────────────────
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from config import get_settings
 import boto3
 from botocore.config import Config
 import uuid
 import os
+import httpx
 router = APIRouter()
 settings = get_settings()
 def get_r2_client():
@@ -117,3 +119,31 @@ async def delete_file(key: str):
         return {"message": "Arquivo removido"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erro ao remover: {str(e)}")
+
+
+@router.get("/download")
+async def download_proxy(url: str, filename: str = "video.mp4"):
+    """Proxy de download — busca o arquivo (R2 ou qualquer URL pública) por
+    trás e devolve com Content-Disposition: attachment, forçando o
+    download de verdade no navegador.
+
+    Sem isso, um link direto pra uma URL de OUTRO domínio (o vídeo tá no
+    R2, o site tá no Vercel) não é tratado como download pelo navegador —
+    o atributo `download` do HTML só é respeitado em links do MESMO
+    domínio. Passando pelo nosso backend, quem manda no cabeçalho HTTP
+    somos nós, e isso funciona não importa a origem do arquivo."""
+    safe_filename = (filename or "video.mp4").replace('"', "").replace("\n", "").replace("\r", "")
+
+    async def stream():
+        async with httpx.AsyncClient(timeout=60) as client:
+            async with client.stream("GET", url) as res:
+                if res.status_code != 200:
+                    raise HTTPException(status_code=502, detail="Não consegui baixar o arquivo original.")
+                async for chunk in res.aiter_bytes(chunk_size=1024 * 256):
+                    yield chunk
+
+    return StreamingResponse(
+        stream(),
+        media_type="video/mp4",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+    )
