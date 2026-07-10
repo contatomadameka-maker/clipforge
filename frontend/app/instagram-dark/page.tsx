@@ -92,7 +92,7 @@ interface BatchResult {
 }
 
 export default function InstagramDarkPage() {
-  const [tab, setTab] = useState<"perfil" | "link" | "lote">("perfil");
+  const [tab, setTab] = useState<"perfil" | "link" | "tiktok" | "facebook" | "lote">("perfil");
 
   const [profileInput, setProfileInput] = useState("");
   const [linkInput, setLinkInput] = useState("");
@@ -118,6 +118,11 @@ export default function InstagramDarkPage() {
 
   // ── Editor em Massa — estado próprio, separado do fluxo de faixa/marca acima ──
   const [batchSource, setBatchSource] = useState<"existing" | "tiktok" | "facebook" | "upload">("existing");
+
+  function goToEditorWith(source: "tiktok" | "facebook") {
+    setBatchSource(source);
+    setTab("lote");
+  }
 
   // ── TikTok — busca por perfil, dentro do Editor em Massa ──
   const [tiktokProfileInput, setTiktokProfileInput] = useState("");
@@ -786,6 +791,8 @@ export default function InstagramDarkPage() {
           {[
             { id: "perfil", label: "Buscar por perfil", icon: "🔍", grad: "linear-gradient(135deg,#833AB4,#5851DB)", glow: "rgba(131,58,180,0.35)" },
             { id: "link", label: "Link de um Reels", icon: "🔗", grad: "linear-gradient(135deg,#5B51D8,#3897F0)", glow: "rgba(56,151,240,0.35)" },
+            { id: "tiktok", label: "TikTok", icon: "🎵", grad: "linear-gradient(135deg,#000000,#ee1d52)", glow: "rgba(238,29,82,0.35)" },
+            { id: "facebook", label: "Facebook", icon: "👥", grad: "linear-gradient(135deg,#0064e0,#00c6ff)", glow: "rgba(0,100,224,0.35)" },
             { id: "lote", label: "Editor em Massa", icon: "🎛️", grad: "linear-gradient(135deg,#FD1D1D,#F77737)", glow: "rgba(247,119,55,0.35)" },
           ].map(t => (
             <button key={t.id} type="button" onClick={() => setTab(t.id as any)}
@@ -837,10 +844,128 @@ export default function InstagramDarkPage() {
           </div>
         )}
 
-        {error && tab !== "lote" && <p className="text-xs text-[#f87171] -mt-3">{error}</p>}
+        {/* ═══════════ Aba TikTok — busca por perfil ═══════════ */}
+        {tab === "tiktok" && (
+          <>
+            <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <label className="text-xs font-medium text-[#9090a8] block mb-2">@usuário ou link do perfil no TikTok</label>
+              <div className="flex gap-2">
+                <input type="text" value={tiktokProfileInput} onChange={e => setTiktokProfileInput(e.target.value)}
+                  placeholder="https://tiktok.com/@perfil ou @perfil"
+                  onKeyDown={e => e.key === "Enter" && searchTiktokVideos()}
+                  className="flex-1 h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
+                  style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                <button type="button" onClick={searchTiktokVideos} disabled={tiktokLoading}
+                  className="px-5 h-11 rounded-[8px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "#7c6df5", color: "#fff" }}>
+                  {tiktokLoading ? "Buscando..." : "Buscar"}
+                </button>
+              </div>
+            </div>
+
+            {tiktokError && <p className="text-xs text-[#f87171] -mt-3">{tiktokError}</p>}
+
+            {tiktokVideos.length > 0 && (
+              <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-medium text-[#9090a8]">{tiktokVideos.length} vídeos encontrados — {tiktokSelected.size} selecionados</p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setTiktokSelected(new Set(tiktokVideos.map(v => v.media_id)))}
+                      className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>Selecionar todos</button>
+                    <button type="button" onClick={() => setTiktokSelected(new Set())}
+                      className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Limpar</button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {tiktokVideos.map(v => (
+                    <div key={v.media_id} onClick={() => setTiktokSelected(prev => { const n = new Set(prev); n.has(v.media_id) ? n.delete(v.media_id) : n.add(v.media_id); return n; })}
+                      className="relative rounded-xl overflow-hidden cursor-pointer"
+                      style={{ aspectRatio: "9/16", border: tiktokSelected.has(v.media_id) ? "2px solid #7c6df5" : "1px solid rgba(255,255,255,0.1)" }}>
+                      {v.thumbnail_url ? <img src={v.thumbnail_url} className="w-full h-full object-cover" alt="" /> : <div className="w-full h-full flex items-center justify-center text-[10px] text-[#55556a]">sem prévia</div>}
+                      <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ background: tiktokSelected.has(v.media_id) ? "#7c6df5" : "rgba(0,0,0,0.5)" }}>
+                        {tiktokSelected.has(v.media_id) && <span className="text-white text-xs">✓</span>}
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] text-white" style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}>
+                        👁 {v.views.toLocaleString()} · {Math.round(v.duration_seconds)}s
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => goToEditorWith("tiktok")} disabled={tiktokSelected.size === 0}
+                  className="w-full mt-4 h-11 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+                  🎛️ Editar {tiktokSelected.size} vídeo{tiktokSelected.size !== 1 ? "s" : ""} no Editor em Massa
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* ═══════════ Aba Facebook — busca por página ═══════════ */}
+        {tab === "facebook" && (
+          <>
+            <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <label className="text-xs font-medium text-[#9090a8] block mb-2">Link da página do Facebook</label>
+              <div className="flex gap-2">
+                <input type="text" value={facebookPageInput} onChange={e => setFacebookPageInput(e.target.value)}
+                  placeholder="https://facebook.com/nomedapagina"
+                  onKeyDown={e => e.key === "Enter" && searchFacebookVideos()}
+                  className="flex-1 h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
+                  style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                <button type="button" onClick={searchFacebookVideos} disabled={facebookLoading}
+                  className="px-5 h-11 rounded-[8px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "#7c6df5", color: "#fff" }}>
+                  {facebookLoading ? "Buscando..." : "Buscar"}
+                </button>
+              </div>
+              <p className="text-[10px] text-[#f59e0b] mt-2">⚠️ Cada busca consome créditos reais da API (Apify) — evite repetir sem necessidade.</p>
+            </div>
+
+            {facebookError && <p className="text-xs text-[#f87171] -mt-3">{facebookError}</p>}
+
+            {facebookVideos.length > 0 && (
+              <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                <div className="flex items-center justify-between mb-3">
+                  <p className="text-xs font-medium text-[#9090a8]">{facebookVideos.length} vídeos encontrados — {facebookSelected.size} selecionados</p>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setFacebookSelected(new Set(facebookVideos.map(v => v.media_id)))}
+                      className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>Selecionar todos</button>
+                    <button type="button" onClick={() => setFacebookSelected(new Set())}
+                      className="text-[11px] px-2.5 py-1 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Limpar</button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {facebookVideos.map(v => (
+                    <div key={v.media_id} onClick={() => setFacebookSelected(prev => { const n = new Set(prev); n.has(v.media_id) ? n.delete(v.media_id) : n.add(v.media_id); return n; })}
+                      className="relative rounded-xl overflow-hidden cursor-pointer"
+                      style={{ aspectRatio: "9/16", border: facebookSelected.has(v.media_id) ? "2px solid #7c6df5" : "1px solid rgba(255,255,255,0.1)" }}>
+                      {v.thumbnail_url ? <img src={v.thumbnail_url} className="w-full h-full object-cover" alt="" /> : <div className="w-full h-full flex items-center justify-center text-[10px] text-[#55556a]">sem prévia</div>}
+                      <div className="absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center"
+                        style={{ background: facebookSelected.has(v.media_id) ? "#7c6df5" : "rgba(0,0,0,0.5)" }}>
+                        {facebookSelected.has(v.media_id) && <span className="text-white text-xs">✓</span>}
+                      </div>
+                      <div className="absolute bottom-0 left-0 right-0 px-2 py-1 text-[10px] text-white" style={{ background: "linear-gradient(transparent,rgba(0,0,0,0.8))" }}>
+                        👁 {v.views.toLocaleString()} · {Math.round(v.duration_seconds)}s
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" onClick={() => goToEditorWith("facebook")} disabled={facebookSelected.size === 0}
+                  className="w-full mt-4 h-11 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
+                  🎛️ Editar {facebookSelected.size} vídeo{facebookSelected.size !== 1 ? "s" : ""} no Editor em Massa
+                </button>
+              </div>
+            )}
+          </>
+        )}
+
+
+        {error && (tab === "perfil" || tab === "link") && <p className="text-xs text-[#f87171] -mt-3">{error}</p>}
 
         {/* Grid de reels (aba Buscar/Link) */}
-        {tab !== "lote" && reels.length > 0 && (
+        {(tab === "perfil" || tab === "link") && reels.length > 0 && (
           <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-medium text-[#9090a8]">{reels.length} Reels encontrados — {selected.size} selecionados</p>
@@ -882,7 +1007,7 @@ export default function InstagramDarkPage() {
         )}
 
         {/* Faixa (molde) + marca d'água + custo ao vivo (aba Buscar/Link) */}
-        {tab !== "lote" && reels.length > 0 && (
+        {(tab === "perfil" || tab === "link") && reels.length > 0 && (
           <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
             <div>
               <label className="text-xs font-medium text-[#9090a8] block mb-2">Faixa no topo (opcional — nome do canal ou tema)</label>
@@ -1061,21 +1186,13 @@ export default function InstagramDarkPage() {
 
                 {batchSource === "tiktok" && (
                   <>
-                    <div className="flex gap-2">
-                      <input type="text" value={tiktokProfileInput} onChange={e => setTiktokProfileInput(e.target.value)}
-                        placeholder="@perfil ou link do TikTok"
-                        onKeyDown={e => e.key === "Enter" && searchTiktokVideos()}
-                        className="flex-1 h-9 px-2.5 rounded-[8px] text-[11px] outline-none placeholder-[#3a3a4a]"
-                        style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-                      <button type="button" onClick={searchTiktokVideos} disabled={tiktokLoading}
-                        className="px-3 h-9 rounded-[8px] text-[11px] font-semibold cursor-pointer border-none disabled:opacity-50 flex-shrink-0"
-                        style={{ background: "#7c6df5", color: "#fff" }}>
-                        {tiktokLoading ? "..." : "Buscar"}
-                      </button>
-                    </div>
-                    {tiktokError && <p className="text-[10px] text-[#f87171]">{tiktokError}</p>}
+                    <button type="button" onClick={() => setTab("tiktok")}
+                      className="w-full py-2 rounded-[8px] text-[11px] font-medium cursor-pointer border-none flex items-center justify-center gap-1.5"
+                      style={{ background: "rgba(124,109,245,0.1)", color: "#a99cf8", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                      🔍 Buscar mais vídeos no TikTok
+                    </button>
                     {tiktokVideos.length === 0 ? (
-                      <p className="text-[11px] text-[#55556a] leading-relaxed">Busque um perfil do TikTok pra ver os vídeos aqui.</p>
+                      <p className="text-[11px] text-[#55556a] leading-relaxed">Nenhum vídeo do TikTok buscado ainda — clica acima pra buscar por perfil.</p>
                     ) : (
                       <>
                         <div className="flex items-center justify-between">
@@ -1118,22 +1235,13 @@ export default function InstagramDarkPage() {
 
                 {batchSource === "facebook" && (
                   <>
-                    <div className="flex gap-2">
-                      <input type="text" value={facebookPageInput} onChange={e => setFacebookPageInput(e.target.value)}
-                        placeholder="Link da página do Facebook"
-                        onKeyDown={e => e.key === "Enter" && searchFacebookVideos()}
-                        className="flex-1 h-9 px-2.5 rounded-[8px] text-[11px] outline-none placeholder-[#3a3a4a]"
-                        style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-                      <button type="button" onClick={searchFacebookVideos} disabled={facebookLoading}
-                        className="px-3 h-9 rounded-[8px] text-[11px] font-semibold cursor-pointer border-none disabled:opacity-50 flex-shrink-0"
-                        style={{ background: "#7c6df5", color: "#fff" }}>
-                        {facebookLoading ? "..." : "Buscar"}
-                      </button>
-                    </div>
-                    <p className="text-[9px] text-[#55556a]">Cada busca consome créditos reais na API — evite repetir sem necessidade.</p>
-                    {facebookError && <p className="text-[10px] text-[#f87171]">{facebookError}</p>}
+                    <button type="button" onClick={() => setTab("facebook")}
+                      className="w-full py-2 rounded-[8px] text-[11px] font-medium cursor-pointer border-none flex items-center justify-center gap-1.5"
+                      style={{ background: "rgba(124,109,245,0.1)", color: "#a99cf8", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                      🔍 Buscar mais vídeos no Facebook
+                    </button>
                     {facebookVideos.length === 0 ? (
-                      <p className="text-[11px] text-[#55556a] leading-relaxed">Busque uma página do Facebook pra ver os vídeos aqui.</p>
+                      <p className="text-[11px] text-[#55556a] leading-relaxed">Nenhum vídeo do Facebook buscado ainda — clica acima pra buscar por página.</p>
                     ) : (
                       <>
                         <div className="flex items-center justify-between">
