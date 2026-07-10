@@ -35,11 +35,23 @@ logger = logging.getLogger("batch_editor")
 CANVAS_W = 1080
 CANVAS_H = 1920
 
-# Fonte usada nos textos (Título/Inferior) — arquivo incluído no repo em
-# backend/assets/fonts/, pra não depender de fontes instaladas no sistema
-# do Render (ambientes mínimos costumam não ter nenhuma TTF disponível).
+# Fonte padrão ("Sistema") — arquivo incluído no repo em backend/assets/fonts/,
+# pra não depender de fontes instaladas no sistema do Render.
 _FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts", "DejaVuSans-Bold.ttf")
-_font_cache: dict[int, "ImageFont.FreeTypeFont"] = {}
+
+# Outras fontes — baixadas SOB DEMANDA do Google Fonts (repo oficial no
+# GitHub) na primeira vez que forem usadas, e cacheadas em disco depois
+# disso. Evita precisar commitar um arquivo de fonte por opção no repo.
+FONT_SOURCES: dict[str, str] = {
+    "poppins": "https://raw.githubusercontent.com/google/fonts/main/ofl/poppins/Poppins-Bold.ttf",
+    "anton": "https://raw.githubusercontent.com/google/fonts/main/ofl/anton/Anton-Regular.ttf",
+    "bebas_neue": "https://raw.githubusercontent.com/google/fonts/main/ofl/bebasneue/BebasNeue-Regular.ttf",
+    "montserrat": "https://raw.githubusercontent.com/google/fonts/main/ofl/montserrat/Montserrat%5Bwght%5D.ttf",
+    "raleway": "https://raw.githubusercontent.com/google/fonts/main/ofl/raleway/Raleway%5Bwght%5D.ttf",
+    "oswald": "https://raw.githubusercontent.com/google/fonts/main/ofl/oswald/Oswald%5Bwght%5D.ttf",
+}
+_font_file_cache: dict[str, str] = {}   # nome da fonte -> caminho local já baixado
+_font_cache: dict[str, "ImageFont.FreeTypeFont"] = {}  # "caminho:tamanho" -> objeto de fonte pronto
 
 # Estado dos jobs em memória — mesmo padrão já usado no resto do backend
 # (kling_elements.py, etc). Em produção com múltiplos workers isso devia
@@ -68,12 +80,14 @@ class BatchEditRequest(BaseModel):
     # ── Fase 2: Título (cicla 1 linha por vídeo) + Texto inferior (fixo em todos) ──
     # Cada um pode ser TEXTO ou IMAGEM — se a URL de imagem vier preenchida,
     # ela tem prioridade sobre o texto correspondente.
-    title_lines: List[str] = []        # cada linha vira o título de 1 vídeo, na ordem; cicla se faltar linha
+    title_lines: List[str] = []        # cada bloco vira o título de 1 vídeo, na ordem; cicla se faltar bloco
+    title_overrides: List[Optional[str]] = []  # título ESPECÍFICO por vídeo (index-alinhado com `videos`) — tem prioridade sobre title_lines quando preenchido
     title_image_url: Optional[str] = None
     title_x_pct: float = 50.0
     title_y_pct: float = 12.0
     title_font_size_pct: float = 6.0   # também usado como LARGURA da imagem (% do canvas) quando title_image_url está setado
     title_color: str = "#ffffff"
+    title_font: str = "sistema"        # chave de FONT_SOURCES, ou "sistema" pra DejaVu (padrão)
 
     bottom_text: Optional[str] = None  # mesmo texto em TODOS os vídeos do lote
     bottom_image_url: Optional[str] = None
@@ -81,6 +95,7 @@ class BatchEditRequest(BaseModel):
     bottom_y_pct: float = 88.0
     bottom_font_size_pct: float = 4.5  # também usado como LARGURA da imagem quando bottom_image_url está setado
     bottom_color: str = "#ffffff"
+    bottom_font: str = "sistema"
 
 
 async def _run(cmd: list[str]) -> tuple[int, bytes, bytes]:
@@ -124,51 +139,70 @@ def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
     return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore
 
 
-def _load_font(size_px: int) -> "ImageFont.FreeTypeFont":
-    size_px = max(10, size_px)
-    if size_px in _font_cache:
-        return _font_cache[size_px]
+async def _ensure_font_downloaded(client: httpx.AsyncClient, font_name: str) -> str:
+    """Garante que a fonte escolhida está disponível localmente. 'Sistema'
+    já vem no repo; as outras são baixadas do Google Fonts na primeira vez
+    e ficam cacheadas em disco pras próximas chamadas."""
+    key = (font_name or "sistema").strip().lower()
+    if key not in FONT_SOURCES:
+        return _FONT_PATH  # "sistema" ou nome desconhecido -> fonte padrão
+
+    if key in _font_file_cache:
+        return _font_file_cache[key]
+
+    url = FONT_SOURCES[key]
+    local_path = os.path.join(tempfile.gettempdir(), f"font_{key}.ttf")
     try:
-        font = ImageFont.truetype(_FONT_PATH, size_px)
+        res = await client.get(url, timeout=20)
+        if res.status_code == 200 and res.content:
+            with open(local_path, "wb") as f:
+                f.write(res.content)
+            _font_file_cache[key] = local_path
+            return local_path
+        logger.error(f"[batch_editor] falha ao baixar fonte '{key}' (HTTP {res.status_code}) — usando Sistema")
     except Exception as e:
-        # Sem a fonte no repo isso cai pro bitmap padrão do Pillow, que
-        # ignora o tamanho pedido e fica minúsculo/feio — sinal de que o
-        # arquivo backend/assets/fonts/DejaVuSans-Bold.ttf não foi commitado.
-        logger.error(f"[batch_editor] não consegui carregar a fonte em {_FONT_PATH}: {e} — usando fonte padrão (vai ficar pequena)")
+        logger.error(f"[batch_editor] erro ao baixar fonte '{key}': {e} — usando Sistema")
+    return _FONT_PATH
+
+
+def _load_font(font_path: str, size_px: int) -> "ImageFont.FreeTypeFont":
+    size_px = max(10, size_px)
+    cache_key = f"{font_path}:{size_px}"
+    if cache_key in _font_cache:
+        return _font_cache[cache_key]
+    try:
+        font = ImageFont.truetype(font_path, size_px)
+        # Fontes variáveis (Montserrat/Raleway/Oswald baixadas como um único
+        # arquivo [wght]) abrem no peso padrão, que costuma ser mais fino do
+        # que "Bold" — tenta forçar o eixo de peso pra 700 (bold). Se a
+        # fonte não for variável ou o Pillow/FreeType não suportar, ignora
+        # silenciosamente e usa o peso padrão mesmo.
+        try:
+            font.set_variation_by_axes([700])
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"[batch_editor] não consegui carregar a fonte em {font_path}: {e} — usando fonte padrão (vai ficar pequena)")
         font = ImageFont.load_default()
-    _font_cache[size_px] = font
+    _font_cache[cache_key] = font
     return font
 
 
-def _wrap_text(draw: "ImageDraw.ImageDraw", text: str, font: "ImageFont.FreeTypeFont", max_width: float) -> list[str]:
-    """Quebra de linha simples baseada na largura real do texto renderizado."""
-    lines: list[str] = []
-    for paragraph in text.split("\n"):
-        words = paragraph.split(" ")
-        current = ""
-        for word in words:
-            candidate = f"{current} {word}".strip()
-            width = draw.textlength(candidate, font=font)
-            if width <= max_width or not current:
-                current = candidate
-            else:
-                lines.append(current)
-                current = word
-        lines.append(current)
-    return lines
-
-
 def _draw_text_block(draw: "ImageDraw.ImageDraw", text: str, x_pct: float, y_pct: float,
-                      font_size_pct: float, color_hex: str) -> None:
+                      font_size_pct: float, color_hex: str, font_path: str) -> None:
     """Desenha um bloco de texto centralizado no ponto (x_pct, y_pct) do
-    canvas, com contorno preto pra legibilidade em cima de qualquer vídeo."""
+    canvas, com contorno preto pra legibilidade em cima de qualquer vídeo.
+    NÃO quebra linha automaticamente por largura — respeita só as quebras
+    de linha (\\n) que o usuário digitou. Se uma linha for larga demais e
+    estourar a lateral do canvas, ela estoura mesmo — controle é manual,
+    por decisão do usuário (evita palavras "pulando" de linha sozinhas
+    quando o tamanho da fonte aumenta)."""
     if not text or not text.strip():
         return
 
     font_size = int(CANVAS_H * font_size_pct / 100)
-    font = _load_font(font_size)
-    max_width = CANVAS_W * 0.86
-    lines = _wrap_text(draw, text.strip(), font, max_width)
+    font = _load_font(font_path, font_size)
+    lines = text.split("\n")
 
     line_height = int(font_size * 1.25)
     total_height = line_height * len(lines)
@@ -327,14 +361,16 @@ async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[st
         if title_img:
             _paste_image_block(img, title_img, req.title_x_pct, req.title_y_pct, req.title_font_size_pct)
     elif has_title_text:
-        _draw_text_block(draw, title_text or "", req.title_x_pct, req.title_y_pct, req.title_font_size_pct, req.title_color)
+        title_font_path = await _ensure_font_downloaded(client, req.title_font)
+        _draw_text_block(draw, title_text or "", req.title_x_pct, req.title_y_pct, req.title_font_size_pct, req.title_color, title_font_path)
 
     if has_bottom_image:
         bottom_img = await _fetch_image(client, req.bottom_image_url)  # type: ignore
         if bottom_img:
             _paste_image_block(img, bottom_img, req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct)
     elif has_bottom_text:
-        _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color)
+        bottom_font_path = await _ensure_font_downloaded(client, req.bottom_font)
+        _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color, bottom_font_path)
 
     buf = BytesIO()
     img.save(buf, format="PNG")
@@ -360,10 +396,13 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
         vf = _build_filter(src_w, src_h, req, effective_zoom)
         logger.info(f"[batch_editor] job={job_id} idx={index} filtro={vf}")
 
-        # Título: cicla 1 linha por vídeo, na ordem em que os vídeos foram
-        # enviados (se tiver menos linhas que vídeos, volta pro começo).
+        # Título — prioridade: (1) título ESPECÍFICO desse vídeo
+        # (title_overrides, definido manualmente pra 1 vídeo só), senão
+        # (2) cicla os blocos de title_lines na ordem dos vídeos.
         title_text = None
-        if req.title_lines:
+        if index < len(req.title_overrides) and req.title_overrides[index]:
+            title_text = req.title_overrides[index]
+        elif req.title_lines:
             title_text = req.title_lines[index % len(req.title_lines)]
 
         async with httpx.AsyncClient() as client:
