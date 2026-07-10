@@ -1,0 +1,172 @@
+# ─────────────────────────────────────────────────────────────
+# backend/routers/tiktok_dark.py
+# TikTok Dark — lista vídeos de um perfil ou busca 1 vídeo por link,
+# via TikHub. NÃO tem processamento próprio de propósito — os vídeos
+# encontrados aqui alimentam o Editor em Massa (batch_editor.py), que
+# já é agnóstico de origem (aceita qualquer URL pública de vídeo) e já
+# tem todo o pipeline de créditos/bordas/título/marca/anti-dup pronto.
+# Isso evita duplicar toda aquela lógica só pra trocar a fonte.
+#
+# ⚠️ ENDPOINTS DA TIKHUB AINDA NÃO 100% CONFIRMADOS — a documentação
+# completa fica atrás de login, então os nomes/parâmetros abaixo são o
+# melhor palpite fundamentado em documentação pública parcial. Se der
+# erro, o log vai mostrar a resposta crua da TikHub — ajusta a partir
+# daí, mesmo padrão usado pra debugar o Kling.
+# ─────────────────────────────────────────────────────────────
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from config import get_settings
+import httpx
+import re
+import logging
+
+router = APIRouter()
+settings = get_settings()
+logger = logging.getLogger("tiktok_dark")
+
+TIKHUB_BASE = "https://api.tikhub.io"
+
+
+def extract_tiktok_username(profile_url_or_username: str) -> str:
+    """Aceita tanto um @username quanto uma URL completa do perfil TikTok."""
+    text = profile_url_or_username.strip()
+    match = re.search(r"tiktok\.com/@([A-Za-z0-9._]+)", text)
+    if match:
+        return match.group(1)
+    return text.lstrip("@")
+
+
+class VideoItem(BaseModel):
+    media_id: str
+    video_url: str
+    thumbnail_url: str
+    views: int = 0
+    duration_seconds: float = 0
+
+
+class ListVideosResponse(BaseModel):
+    videos: List[VideoItem]
+    next_cursor: Optional[str] = None
+
+
+def _auth_headers() -> dict:
+    if not settings.tikhub_api_key:
+        raise HTTPException(status_code=503, detail="TIKHUB_API_KEY não configurada ainda no backend.")
+    return {"Authorization": f"Bearer {settings.tikhub_api_key}"}
+
+
+@router.get("/list-videos", response_model=ListVideosResponse)
+async def list_videos(profile: str, cursor: Optional[str] = None):
+    """Lista uma página de vídeos de um perfil público do TikTok."""
+    username = extract_tiktok_username(profile)
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        # 1) Resolve o username pro sec_user_id interno do TikTok
+        user_res = await client.get(
+            f"{TIKHUB_BASE}/api/v1/tiktok/web/fetch_user_profile",
+            params={"unique_id": username},
+            headers=_auth_headers(),
+        )
+        logger.info(f"[tiktok-dark] fetch_user_profile http={user_res.status_code} body={user_res.text[:500]}")
+        if user_res.status_code != 200:
+            raise HTTPException(status_code=404, detail="Perfil não encontrado ou privado.")
+
+        user_data = user_res.json()
+        # Formato exato da resposta ainda não confirmado — tenta os
+        # caminhos mais prováveis antes de desistir.
+        sec_uid = (
+            user_data.get("data", {}).get("user", {}).get("secUid")
+            or user_data.get("data", {}).get("sec_uid")
+            or user_data.get("sec_uid")
+        )
+        if not sec_uid:
+            logger.error(f"[tiktok-dark] não achei sec_uid na resposta: {list(user_data.keys())}")
+            raise HTTPException(status_code=502, detail="Não consegui resolver esse perfil do TikTok (formato de resposta inesperado da TikHub).")
+
+        # 2) Busca uma página de vídeos do perfil
+        params = {"sec_user_id": sec_uid, "count": 20}
+        if cursor:
+            params["max_cursor"] = cursor
+
+        videos_res = await client.get(
+            f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_user_post_videos",
+            params=params,
+            headers=_auth_headers(),
+        )
+        logger.info(f"[tiktok-dark] fetch_user_post_videos http={videos_res.status_code} body={videos_res.text[:800]}")
+        if videos_res.status_code != 200:
+            raise HTTPException(status_code=502, detail="Erro ao buscar vídeos desse perfil no TikTok.")
+
+        data = videos_res.json()
+        items = data.get("data", {}).get("aweme_list") or data.get("data", {}).get("itemList") or []
+        next_cursor = data.get("data", {}).get("max_cursor") or data.get("data", {}).get("cursor")
+
+        result = []
+        for item in items:
+            video_info = item.get("video", {})
+            # Vídeo sem marca d'água costuma vir em play_addr ou download_addr
+            play_urls = (
+                video_info.get("play_addr", {}).get("url_list")
+                or video_info.get("download_addr", {}).get("url_list")
+                or []
+            )
+            video_url = play_urls[0] if play_urls else ""
+
+            cover_urls = video_info.get("cover", {}).get("url_list") or video_info.get("origin_cover", {}).get("url_list") or []
+            thumb_url = cover_urls[0] if cover_urls else ""
+
+            if video_url:
+                result.append(VideoItem(
+                    media_id=str(item.get("aweme_id", "")),
+                    video_url=video_url,
+                    thumbnail_url=thumb_url,
+                    views=item.get("statistics", {}).get("play_count", 0) or 0,
+                    duration_seconds=(video_info.get("duration", 0) or 0) / 1000,  # geralmente vem em ms
+                ))
+
+        return ListVideosResponse(videos=result, next_cursor=next_cursor)
+
+
+@router.get("/video-by-url", response_model=VideoItem)
+async def video_by_url(url: str):
+    """Busca 1 vídeo específico do TikTok direto pelo link, via
+    /api/v1/tiktok/app/v3/fetch_one_video_by_share_url (confirmado na
+    documentação pública da TikHub)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            f"{TIKHUB_BASE}/api/v1/tiktok/app/v3/fetch_one_video_by_share_url",
+            params={"share_url": url.strip()},
+            headers=_auth_headers(),
+        )
+        logger.info(f"[tiktok-dark] fetch_one_video_by_share_url http={res.status_code} body={res.text[:800]}")
+        if res.status_code == 404:
+            raise HTTPException(status_code=404, detail="Vídeo não encontrado — confira se o link está certo e se o post é público.")
+        if res.status_code != 200:
+            raise HTTPException(status_code=502, detail="Erro ao buscar esse vídeo do TikTok.")
+
+        data = res.json()
+        item = data.get("data", {}).get("aweme_detail") or data.get("data", {})
+        video_info = item.get("video", {})
+
+        play_urls = (
+            video_info.get("play_addr", {}).get("url_list")
+            or video_info.get("download_addr", {}).get("url_list")
+            or []
+        )
+        video_url = play_urls[0] if play_urls else ""
+        if not video_url:
+            logger.error(f"[tiktok-dark] video-by-url SEM video_url. Chaves: {list(item.keys())}")
+            raise HTTPException(status_code=422, detail="Esse link não parece ser de um vídeo do TikTok.")
+
+        cover_urls = video_info.get("cover", {}).get("url_list") or []
+        thumb_url = cover_urls[0] if cover_urls else ""
+
+        return VideoItem(
+            media_id=str(item.get("aweme_id", "")),
+            video_url=video_url,
+            thumbnail_url=thumb_url,
+            views=item.get("statistics", {}).get("play_count", 0) or 0,
+            duration_seconds=(video_info.get("duration", 0) or 0) / 1000,
+        )
