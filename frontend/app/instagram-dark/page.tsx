@@ -12,6 +12,18 @@ import { getSupabase } from "@/lib/supabase";
 const API = "https://clipforge-6yzz.onrender.com";
 const CREDITS_PER_REEL = 25;
 
+// Fontes disponíveis — baixadas sob demanda no backend a partir do Google
+// Fonts, exceto "sistema" (DejaVu, já incluída no repo).
+const FONT_OPTIONS: { id: string; label: string }[] = [
+  { id: "sistema", label: "Sistema (padrão)" },
+  { id: "poppins", label: "Poppins" },
+  { id: "montserrat", label: "Montserrat" },
+  { id: "raleway", label: "Raleway" },
+  { id: "oswald", label: "Oswald" },
+  { id: "anton", label: "Anton" },
+  { id: "bebas_neue", label: "Bebas Neue" },
+];
+
 // Download forçado via blob — necessário porque o atributo `download` do
 // <a> é IGNORADO pelo navegador quando o arquivo é de outro domínio (aqui,
 // R2 vs a própria página no Vercel). Sem isso, clicar só abre o vídeo em
@@ -127,7 +139,13 @@ export default function InstagramDarkPage() {
   const [titleY, setTitleY] = useState(12);
   const [titleFontSize, setTitleFontSize] = useState(6);
   const [titleColor, setTitleColor] = useState("#ffffff");
+  const [titleFont, setTitleFont] = useState("sistema");
   const titleImageRef = useRef<HTMLInputElement>(null);
+
+  // Título ESPECÍFICO por vídeo — sobrepõe o ciclo de title_lines só pra
+  // aquele vídeo. Guardado por chave (media_id do Reels, ou id do upload).
+  const [titleOverrides, setTitleOverrides] = useState<Record<string, string>>({});
+  const [editingOverrideKey, setEditingOverrideKey] = useState<string | null>(null);
 
   const [bottomEnabled, setBottomEnabled] = useState(false);
   const [bottomMode, setBottomMode] = useState<"texto" | "imagem">("texto");
@@ -138,6 +156,7 @@ export default function InstagramDarkPage() {
   const [bottomY, setBottomY] = useState(88);
   const [bottomFontSize, setBottomFontSize] = useState(4.5);
   const [bottomColor, setBottomColor] = useState("#ffffff");
+  const [bottomFont, setBottomFont] = useState("sistema");
   const bottomImageRef = useRef<HTMLInputElement>(null);
 
   async function uploadOverlayImage(file: File, onDone: (url: string) => void, setUploading: (v: boolean) => void) {
@@ -352,9 +371,10 @@ export default function InstagramDarkPage() {
     setBatchUploads(prev => prev.filter(u => u.id !== id));
   }
 
-  const batchVideoUrls: string[] = batchSource === "existing"
-    ? reels.filter(r => batchSelectedReels.has(r.media_id)).map(r => r.video_url)
-    : batchUploads.filter(u => u.url).map(u => u.url);
+  const batchItems: { url: string; key: string }[] = batchSource === "existing"
+    ? reels.filter(r => batchSelectedReels.has(r.media_id)).map(r => ({ url: r.video_url, key: r.media_id }))
+    : batchUploads.filter(u => u.url).map(u => ({ url: u.url, key: u.id }));
+  const batchVideoUrls: string[] = batchItems.map(i => i.url);
 
   async function startBatchProcess() {
     if (batchVideoUrls.length === 0) {
@@ -382,17 +402,20 @@ export default function InstagramDarkPage() {
           border_mode: borderMode,
           border_target_pct: borderTargetPct,
           title_lines: titleEnabled && titleMode === "texto" ? titleBlocks : [],
+          title_overrides: titleEnabled && titleMode === "texto" ? batchItems.map(i => titleOverrides[i.key]?.trim() || null) : [],
           title_image_url: titleEnabled && titleMode === "imagem" && titleImageUrl ? titleImageUrl : null,
           title_x_pct: titleX,
           title_y_pct: titleY,
           title_font_size_pct: titleFontSize,
           title_color: titleColor,
+          title_font: titleFont,
           bottom_text: bottomEnabled && bottomMode === "texto" && bottomText.trim() ? bottomText.trim() : null,
           bottom_image_url: bottomEnabled && bottomMode === "imagem" && bottomImageUrl ? bottomImageUrl : null,
           bottom_x_pct: bottomX,
           bottom_y_pct: bottomY,
           bottom_font_size_pct: bottomFontSize,
           bottom_color: bottomColor,
+          bottom_font: bottomFont,
         }),
       });
       if (!res.ok) {
@@ -437,6 +460,10 @@ export default function InstagramDarkPage() {
   const effectivePreviewUrl = (previewUrl && batchVideoUrls.includes(previewUrl))
     ? previewUrl
     : (batchVideoUrls[0] || null);
+  const effectivePreviewKey = batchItems.find(i => i.url === effectivePreviewUrl)?.key;
+  const previewTitleText = (effectivePreviewKey && titleOverrides[effectivePreviewKey]?.trim())
+    || titleBlocks[0]
+    || "";
 
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
@@ -741,20 +768,40 @@ export default function InstagramDarkPage() {
                         {reels.map(reel => {
                           const isSelected = batchSelectedReels.has(reel.media_id);
                           const isPreviewing = effectivePreviewUrl === reel.video_url;
+                          const hasOverride = !!titleOverrides[reel.media_id]?.trim();
+                          const isEditingThis = editingOverrideKey === reel.media_id;
                           return (
-                            <div key={reel.media_id}
-                              className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
-                              style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
-                              onClick={() => setPreviewUrl(reel.video_url)}>
-                              <div onClick={e => { e.stopPropagation(); toggleBatchReel(reel.media_id); }}
-                                className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
-                                style={{ background: isSelected ? "#7c6df5" : "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
-                                {isSelected && <span className="text-white text-[9px]">✓</span>}
+                            <div key={reel.media_id} className="flex flex-col gap-1.5">
+                              <div
+                                className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                                onClick={() => setPreviewUrl(reel.video_url)}>
+                                <div onClick={e => { e.stopPropagation(); toggleBatchReel(reel.media_id); }}
+                                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
+                                  style={{ background: isSelected ? "#7c6df5" : "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
+                                  {isSelected && <span className="text-white text-[9px]">✓</span>}
+                                </div>
+                                <div className="w-8 rounded overflow-hidden flex-shrink-0" style={{ aspectRatio: "9/16" }}>
+                                  <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                                </div>
+                                <span className="text-[10px] text-[#9090a8] truncate flex-1">{Math.round(reel.duration_seconds)}s · {reel.views.toLocaleString()} views</span>
+                                {titleEnabled && titleMode === "texto" && (
+                                  <button type="button" onClick={e => { e.stopPropagation(); setEditingOverrideKey(isEditingThis ? null : reel.media_id); }}
+                                    title="Título só deste vídeo"
+                                    className="text-[10px] px-1.5 py-0.5 rounded-[5px] cursor-pointer border-none flex-shrink-0"
+                                    style={hasOverride ? { background: "rgba(62,207,142,0.2)", color: "#3ecf8e" } : { background: "rgba(255,255,255,0.06)", color: "#55556a" }}>
+                                    ✏️
+                                  </button>
+                                )}
                               </div>
-                              <div className="w-8 rounded overflow-hidden flex-shrink-0" style={{ aspectRatio: "9/16" }}>
-                                <img src={reel.thumbnail_url} className="w-full h-full object-cover" alt="" />
-                              </div>
-                              <span className="text-[10px] text-[#9090a8] truncate flex-1">{Math.round(reel.duration_seconds)}s · {reel.views.toLocaleString()} views</span>
+                              {isEditingThis && (
+                                <input type="text" autoFocus value={titleOverrides[reel.media_id] || ""}
+                                  onChange={e => setTitleOverrides(prev => ({ ...prev, [reel.media_id]: e.target.value }))}
+                                  onKeyDown={e => e.key === "Enter" && setEditingOverrideKey(null)}
+                                  placeholder="Título só pra esse vídeo (deixe vazio pra usar o ciclo normal)"
+                                  className="w-full px-2.5 py-1.5 rounded-[6px] text-[10px] outline-none placeholder-[#3a3a4a]"
+                                  style={{ color: "#f0f0f5", background: "rgba(62,207,142,0.06)", border: "0.5px solid rgba(62,207,142,0.3)" }} />
+                              )}
                             </div>
                           );
                         })}
@@ -777,19 +824,41 @@ export default function InstagramDarkPage() {
                       <div className="flex flex-col gap-1.5 max-h-[440px] overflow-y-auto">
                         {batchUploads.map(u => {
                           const isPreviewing = !!u.url && effectivePreviewUrl === u.url;
+                          const hasOverride = !!titleOverrides[u.id]?.trim();
+                          const isEditingThis = editingOverrideKey === u.id;
                           return (
-                            <div key={u.id}
-                              className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
-                              style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
-                              onClick={() => u.url && setPreviewUrl(u.url)}>
-                              <span className="text-[10px] text-[#9090a8] truncate flex-1">{u.name}</span>
-                              {u.uploading ? (
-                                <span className="text-[9px] text-[#60a5fa] flex-shrink-0">Enviando...</span>
-                              ) : (
-                                <button type="button" onClick={e => { e.stopPropagation(); removeBatchUpload(u.id); }}
-                                  className="text-[9px] px-1.5 py-0.5 rounded-[6px] cursor-pointer border-none flex-shrink-0" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
-                                  Remover
-                                </button>
+                            <div key={u.id} className="flex flex-col gap-1.5">
+                              <div
+                                className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                                onClick={() => u.url && setPreviewUrl(u.url)}>
+                                <span className="text-[10px] text-[#9090a8] truncate flex-1">{u.name}</span>
+                                {u.uploading ? (
+                                  <span className="text-[9px] text-[#60a5fa] flex-shrink-0">Enviando...</span>
+                                ) : (
+                                  <>
+                                    {titleEnabled && titleMode === "texto" && (
+                                      <button type="button" onClick={e => { e.stopPropagation(); setEditingOverrideKey(isEditingThis ? null : u.id); }}
+                                        title="Título só deste vídeo"
+                                        className="text-[10px] px-1.5 py-0.5 rounded-[5px] cursor-pointer border-none flex-shrink-0"
+                                        style={hasOverride ? { background: "rgba(62,207,142,0.2)", color: "#3ecf8e" } : { background: "rgba(255,255,255,0.06)", color: "#55556a" }}>
+                                        ✏️
+                                      </button>
+                                    )}
+                                    <button type="button" onClick={e => { e.stopPropagation(); removeBatchUpload(u.id); }}
+                                      className="text-[9px] px-1.5 py-0.5 rounded-[6px] cursor-pointer border-none flex-shrink-0" style={{ background: "rgba(248,113,113,0.1)", color: "#f87171" }}>
+                                      Remover
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                              {isEditingThis && (
+                                <input type="text" autoFocus value={titleOverrides[u.id] || ""}
+                                  onChange={e => setTitleOverrides(prev => ({ ...prev, [u.id]: e.target.value }))}
+                                  onKeyDown={e => e.key === "Enter" && setEditingOverrideKey(null)}
+                                  placeholder="Título só pra esse vídeo (deixe vazio pra usar o ciclo normal)"
+                                  className="w-full px-2.5 py-1.5 rounded-[6px] text-[10px] outline-none placeholder-[#3a3a4a]"
+                                  style={{ color: "#f0f0f5", background: "rgba(62,207,142,0.06)", border: "0.5px solid rgba(62,207,142,0.3)" }} />
                               )}
                             </div>
                           );
@@ -833,7 +902,7 @@ export default function InstagramDarkPage() {
                     )}
 
                     {/* Prévia do título (texto ou imagem) */}
-                    {titleEnabled && titleMode === "texto" && titleBlocks[0] && (
+                    {titleEnabled && titleMode === "texto" && previewTitleText && (
                       <div className="absolute px-2 text-center font-bold pointer-events-none"
                         style={{
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
@@ -841,7 +910,7 @@ export default function InstagramDarkPage() {
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
-                        {titleBlocks[0]}
+                        {previewTitleText}
                       </div>
                     )}
                     {titleEnabled && titleMode === "imagem" && titleImageUrl && (
@@ -1020,6 +1089,14 @@ export default function InstagramDarkPage() {
                         )}
 
                         <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Fonte</label>
+                          <select value={titleFont} onChange={e => setTitleFont(e.target.value)}
+                            className="w-full h-9 px-3 rounded-[8px] text-xs outline-none cursor-pointer"
+                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+                            {FONT_OPTIONS.map(f => <option key={f.id} value={f.id} style={{ background: "#131318" }}>{f.label}</option>)}
+                          </select>
+                        </div>
+                        <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
                             {titleMode === "imagem" ? `Largura da imagem: ${titleFontSize}%` : `Tamanho do texto: ${titleFontSize}%`}
                           </label>
@@ -1097,6 +1174,14 @@ export default function InstagramDarkPage() {
                           </div>
                         )}
 
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Fonte</label>
+                          <select value={bottomFont} onChange={e => setBottomFont(e.target.value)}
+                            className="w-full h-9 px-3 rounded-[8px] text-xs outline-none cursor-pointer"
+                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+                            {FONT_OPTIONS.map(f => <option key={f.id} value={f.id} style={{ background: "#131318" }}>{f.label}</option>)}
+                          </select>
+                        </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
                             {bottomMode === "imagem" ? `Largura da imagem: ${bottomFontSize}%` : `Tamanho do texto: ${bottomFontSize}%`}
