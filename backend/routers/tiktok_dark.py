@@ -20,6 +20,7 @@ from typing import List, Optional
 from config import get_settings
 import httpx
 import re
+import json
 import logging
 
 router = APIRouter()
@@ -163,7 +164,30 @@ async def video_by_url(url: str):
             raise HTTPException(status_code=502, detail=f"Erro ao buscar esse vídeo do TikTok: {res.text[:300]}")
 
         data = res.json()
-        item = data.get("data", {}).get("aweme_detail") or data.get("data", {})
+        # Log separado com o JSON completo (não cortado) — a resposta da
+        # TikHub tem um monte de metadado (cache, billing) antes do vídeo
+        # em si, então os 800 caracteres do log acima às vezes cortam bem
+        # no meio do que interessa.
+        logger.info(f"[tiktok-dark] JSON completo: {json.dumps(data, ensure_ascii=False)}")
+
+        container = data.get("data", {}) if isinstance(data.get("data"), dict) else {}
+        # Tenta vários formatos possíveis, já que a doc não deixou claro
+        # qual — loga qual caminho funcionou (ou não) pra facilitar o
+        # próximo ajuste se ainda estiver errado.
+        item = (
+            container.get("aweme_detail")
+            or container.get("aweme_details")
+            or (container.get("data", {}) or {}).get("aweme_detail") if isinstance(container.get("data"), dict) else None
+        )
+        if not item:
+            # Última tentativa: talvez o próprio "container" JÁ seja o
+            # objeto do vídeo (sem embrulho "aweme_detail").
+            if "video" in container or "aweme_id" in container:
+                item = container
+            else:
+                logger.error(f"[tiktok-dark] não achei o vídeo em nenhum caminho conhecido. Chaves de 'data': {list(container.keys())}")
+                raise HTTPException(status_code=422, detail=f"Formato de resposta inesperado da TikHub. Chaves recebidas: {list(container.keys())}")
+
         video_info = item.get("video", {})
 
         play_urls = (
