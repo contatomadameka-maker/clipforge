@@ -117,7 +117,71 @@ export default function InstagramDarkPage() {
   const watermarkFileRef = useRef<HTMLInputElement>(null);
 
   // ── Editor em Massa — estado próprio, separado do fluxo de faixa/marca acima ──
-  const [batchSource, setBatchSource] = useState<"existing" | "upload">("existing");
+  const [batchSource, setBatchSource] = useState<"existing" | "tiktok" | "facebook" | "upload">("existing");
+
+  // ── TikTok — busca por perfil, dentro do Editor em Massa ──
+  const [tiktokProfileInput, setTiktokProfileInput] = useState("");
+  const [tiktokLoading, setTiktokLoading] = useState(false);
+  const [tiktokVideos, setTiktokVideos] = useState<ReelItem[]>([]);
+  const [tiktokSelected, setTiktokSelected] = useState<Set<string>>(new Set());
+  const [tiktokError, setTiktokError] = useState<string | null>(null);
+
+  async function searchTiktokVideos() {
+    if (!tiktokProfileInput.trim()) return;
+    setTiktokLoading(true);
+    setTiktokError(null);
+    setTiktokVideos([]);
+    setTiktokSelected(new Set());
+    try {
+      const res = await fetch(`${API}/tiktok-dark/list-videos?profile=${encodeURIComponent(tiktokProfileInput.trim())}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao buscar vídeos desse perfil no TikTok");
+      }
+      const data = await res.json();
+      const items: ReelItem[] = (data.videos || []).map((v: any) => ({
+        media_id: v.media_id, video_url: v.video_url, thumbnail_url: v.thumbnail_url,
+        views: v.views, duration_seconds: v.duration_seconds,
+      }));
+      setTiktokVideos(items);
+    } catch (e: any) {
+      setTiktokError(e.message);
+    } finally {
+      setTiktokLoading(false);
+    }
+  }
+
+  // ── Facebook — busca por página, dentro do Editor em Massa ──
+  const [facebookPageInput, setFacebookPageInput] = useState("");
+  const [facebookLoading, setFacebookLoading] = useState(false);
+  const [facebookVideos, setFacebookVideos] = useState<ReelItem[]>([]);
+  const [facebookSelected, setFacebookSelected] = useState<Set<string>>(new Set());
+  const [facebookError, setFacebookError] = useState<string | null>(null);
+
+  async function searchFacebookVideos() {
+    if (!facebookPageInput.trim()) return;
+    setFacebookLoading(true);
+    setFacebookError(null);
+    setFacebookVideos([]);
+    setFacebookSelected(new Set());
+    try {
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=20`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao buscar vídeos dessa página do Facebook");
+      }
+      const data = await res.json();
+      const items: ReelItem[] = (data.videos || []).map((v: any) => ({
+        media_id: v.media_id, video_url: v.video_url, thumbnail_url: v.thumbnail_url,
+        views: v.views, duration_seconds: v.duration_seconds,
+      }));
+      setFacebookVideos(items);
+    } catch (e: any) {
+      setFacebookError(e.message);
+    } finally {
+      setFacebookLoading(false);
+    }
+  }
   const [batchSelectedReels, setBatchSelectedReels] = useState<Set<string>>(new Set());
   const [batchUploads, setBatchUploads] = useState<BatchUpload[]>([]);
   const batchFileRef = useRef<HTMLInputElement>(null);
@@ -455,9 +519,11 @@ export default function InstagramDarkPage() {
     setBatchUploads(prev => prev.filter(u => u.id !== id));
   }
 
-  const batchItems: { url: string; key: string }[] = batchSource === "existing"
-    ? reels.filter(r => batchSelectedReels.has(r.media_id)).map(r => ({ url: r.video_url, key: r.media_id }))
-    : batchUploads.filter(u => u.url).map(u => ({ url: u.url, key: u.id }));
+  const batchItems: { url: string; key: string }[] =
+    batchSource === "existing" ? reels.filter(r => batchSelectedReels.has(r.media_id)).map(r => ({ url: r.video_url, key: r.media_id })) :
+    batchSource === "tiktok" ? tiktokVideos.filter(v => tiktokSelected.has(v.media_id)).map(v => ({ url: v.video_url, key: v.media_id })) :
+    batchSource === "facebook" ? facebookVideos.filter(v => facebookSelected.has(v.media_id)).map(v => ({ url: v.video_url, key: v.media_id })) :
+    batchUploads.filter(u => u.url).map(u => ({ url: u.url, key: u.id }));
   const batchVideoUrls: string[] = batchItems.map(i => i.url);
 
   // Distribui os temas do campo principal (titleBlocks) entre os vídeos,
@@ -479,7 +545,7 @@ export default function InstagramDarkPage() {
 
   async function startBatchProcess() {
     if (batchVideoUrls.length === 0) {
-      setBatchError(batchSource === "existing" ? "Selecione ao menos 1 Reels da lista!" : "Envie ao menos 1 vídeo!");
+      setBatchError("Selecione ou envie ao menos 1 vídeo antes de processar!");
       return;
     }
     setBatchError(null);
@@ -919,19 +985,19 @@ export default function InstagramDarkPage() {
 
               {/* ── Coluna esquerda: origem + lista de vídeos ── */}
               <div className="rounded-2xl p-4 flex flex-col gap-3" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                  {[{ id: "existing", label: "📋 Buscados" }, { id: "upload", label: "⬆️ Upload" }].map(s => (
+                <div className="flex gap-1 p-1 rounded-[10px] flex-wrap" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  {[{ id: "existing", label: "📋 Instagram" }, { id: "tiktok", label: "🎵 TikTok" }, { id: "facebook", label: "👥 Facebook" }, { id: "upload", label: "⬆️ Upload" }].map(s => (
                     <button key={s.id} type="button" onClick={() => setBatchSource(s.id as any)}
-                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
+                      className="flex-1 px-2 py-1.5 rounded-[8px] text-[10px] font-medium cursor-pointer border-none transition-all whitespace-nowrap"
                       style={batchSource === s.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
                       {s.label}
                     </button>
                   ))}
                 </div>
 
-                {batchSource === "existing" ? (
+                {batchSource === "existing" && (
                   reels.length === 0 ? (
-                    <p className="text-[11px] text-[#55556a] leading-relaxed">Nenhum Reels buscado ainda — vá na aba "Buscar por perfil", ou troque pra "Upload".</p>
+                    <p className="text-[11px] text-[#55556a] leading-relaxed">Nenhum Reels buscado ainda — vá na aba "Buscar por perfil", ou troque de origem.</p>
                   ) : (
                     <>
                       <div className="flex items-center justify-between">
@@ -991,7 +1057,124 @@ export default function InstagramDarkPage() {
                       </div>
                     </>
                   )
-                ) : (
+                )}
+
+                {batchSource === "tiktok" && (
+                  <>
+                    <div className="flex gap-2">
+                      <input type="text" value={tiktokProfileInput} onChange={e => setTiktokProfileInput(e.target.value)}
+                        placeholder="@perfil ou link do TikTok"
+                        onKeyDown={e => e.key === "Enter" && searchTiktokVideos()}
+                        className="flex-1 h-9 px-2.5 rounded-[8px] text-[11px] outline-none placeholder-[#3a3a4a]"
+                        style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                      <button type="button" onClick={searchTiktokVideos} disabled={tiktokLoading}
+                        className="px-3 h-9 rounded-[8px] text-[11px] font-semibold cursor-pointer border-none disabled:opacity-50 flex-shrink-0"
+                        style={{ background: "#7c6df5", color: "#fff" }}>
+                        {tiktokLoading ? "..." : "Buscar"}
+                      </button>
+                    </div>
+                    {tiktokError && <p className="text-[10px] text-[#f87171]">{tiktokError}</p>}
+                    {tiktokVideos.length === 0 ? (
+                      <p className="text-[11px] text-[#55556a] leading-relaxed">Busque um perfil do TikTok pra ver os vídeos aqui.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-[#55556a]">{tiktokSelected.size} de {tiktokVideos.length}</p>
+                          <div className="flex gap-1.5">
+                            <button type="button" onClick={() => setTiktokSelected(new Set(tiktokVideos.map(v => v.media_id)))}
+                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>Todos</button>
+                            <button type="button" onClick={() => setTiktokSelected(new Set())}
+                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Limpar</button>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5 max-h-[480px] overflow-y-auto">
+                          {tiktokVideos.map(v => {
+                            const isSelected = tiktokSelected.has(v.media_id);
+                            const isPreviewing = effectivePreviewUrl === v.video_url;
+                            return (
+                              <div key={v.media_id}
+                                className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                                onClick={() => setPreviewUrl(v.video_url)}>
+                                <div onClick={e => { e.stopPropagation(); setTiktokSelected(prev => { const n = new Set(prev); n.has(v.media_id) ? n.delete(v.media_id) : n.add(v.media_id); return n; }); }}
+                                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
+                                  style={{ background: isSelected ? "#7c6df5" : "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
+                                  {isSelected && <span className="text-white text-[9px]">✓</span>}
+                                </div>
+                                {v.thumbnail_url && (
+                                  <div className="w-8 rounded overflow-hidden flex-shrink-0" style={{ aspectRatio: "9/16" }}>
+                                    <img src={v.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                                  </div>
+                                )}
+                                <span className="text-[10px] text-[#9090a8] truncate flex-1">{Math.round(v.duration_seconds)}s · {v.views.toLocaleString()} views</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {batchSource === "facebook" && (
+                  <>
+                    <div className="flex gap-2">
+                      <input type="text" value={facebookPageInput} onChange={e => setFacebookPageInput(e.target.value)}
+                        placeholder="Link da página do Facebook"
+                        onKeyDown={e => e.key === "Enter" && searchFacebookVideos()}
+                        className="flex-1 h-9 px-2.5 rounded-[8px] text-[11px] outline-none placeholder-[#3a3a4a]"
+                        style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                      <button type="button" onClick={searchFacebookVideos} disabled={facebookLoading}
+                        className="px-3 h-9 rounded-[8px] text-[11px] font-semibold cursor-pointer border-none disabled:opacity-50 flex-shrink-0"
+                        style={{ background: "#7c6df5", color: "#fff" }}>
+                        {facebookLoading ? "..." : "Buscar"}
+                      </button>
+                    </div>
+                    <p className="text-[9px] text-[#55556a]">Cada busca consome créditos reais na API — evite repetir sem necessidade.</p>
+                    {facebookError && <p className="text-[10px] text-[#f87171]">{facebookError}</p>}
+                    {facebookVideos.length === 0 ? (
+                      <p className="text-[11px] text-[#55556a] leading-relaxed">Busque uma página do Facebook pra ver os vídeos aqui.</p>
+                    ) : (
+                      <>
+                        <div className="flex items-center justify-between">
+                          <p className="text-[10px] text-[#55556a]">{facebookSelected.size} de {facebookVideos.length}</p>
+                          <div className="flex gap-1.5">
+                            <button type="button" onClick={() => setFacebookSelected(new Set(facebookVideos.map(v => v.media_id)))}
+                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(124,109,245,0.15)", color: "#a99cf8" }}>Todos</button>
+                            <button type="button" onClick={() => setFacebookSelected(new Set())}
+                              className="text-[10px] px-2 py-0.5 rounded-[6px] cursor-pointer border-none" style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>Limpar</button>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-1.5 max-h-[480px] overflow-y-auto">
+                          {facebookVideos.map(v => {
+                            const isSelected = facebookSelected.has(v.media_id);
+                            const isPreviewing = effectivePreviewUrl === v.video_url;
+                            return (
+                              <div key={v.media_id}
+                                className="flex items-center gap-2 px-2 py-2 rounded-[8px] cursor-pointer"
+                                style={{ background: isPreviewing ? "rgba(124,109,245,0.15)" : "rgba(255,255,255,0.03)", border: isPreviewing ? "1px solid rgba(124,109,245,0.4)" : "1px solid transparent" }}
+                                onClick={() => setPreviewUrl(v.video_url)}>
+                                <div onClick={e => { e.stopPropagation(); setFacebookSelected(prev => { const n = new Set(prev); n.has(v.media_id) ? n.delete(v.media_id) : n.add(v.media_id); return n; }); }}
+                                  className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0 cursor-pointer"
+                                  style={{ background: isSelected ? "#7c6df5" : "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)" }}>
+                                  {isSelected && <span className="text-white text-[9px]">✓</span>}
+                                </div>
+                                {v.thumbnail_url && (
+                                  <div className="w-8 rounded overflow-hidden flex-shrink-0" style={{ aspectRatio: "9/16" }}>
+                                    <img src={v.thumbnail_url} className="w-full h-full object-cover" alt="" />
+                                  </div>
+                                )}
+                                <span className="text-[10px] text-[#9090a8] truncate flex-1">{Math.round(v.duration_seconds)}s · {v.views.toLocaleString()} views</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {batchSource === "upload" && (
                   <>
                     <div onClick={() => batchFileRef.current?.click()}
                       onDrop={e => { e.preventDefault(); handleBatchFilesSelected(e.dataTransfer.files); }}
