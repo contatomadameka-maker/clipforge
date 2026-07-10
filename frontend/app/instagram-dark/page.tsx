@@ -6,7 +6,7 @@
 // NOVO: aba "Editor em Massa" — enquadramento 1080x1920 (zoom/posição/
 // bordas) aplicado em lote, sobre Reels já buscados OU upload novo.
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { getSupabase } from "@/lib/supabase";
 
 const API = "https://clipforge-6yzz.onrender.com";
@@ -28,12 +28,12 @@ const FONT_OPTIONS: { id: string; label: string }[] = [
 // baixada direto no backend — isso aqui é só pra mostrar algo parecido na tela).
 const FONT_CSS_FAMILY: Record<string, string> = {
   sistema: "inherit",
-  poppins: "'IGDark Poppins', sans-serif",
-  montserrat: "'IGDark Montserrat', sans-serif",
-  raleway: "'IGDark Raleway', sans-serif",
-  oswald: "'IGDark Oswald', sans-serif",
-  anton: "'IGDark Anton', sans-serif",
-  bebas_neue: "'IGDark Bebas Neue', sans-serif",
+  poppins: "'Poppins', sans-serif",
+  montserrat: "'Montserrat', sans-serif",
+  raleway: "'Raleway', sans-serif",
+  oswald: "'Oswald', sans-serif",
+  anton: "'Anton', sans-serif",
+  bebas_neue: "'Bebas Neue', sans-serif",
 };
 
 // Download forçado via blob — necessário porque o atributo `download` do
@@ -222,6 +222,19 @@ export default function InstagramDarkPage() {
   }
 
   useState(() => { refreshCredits(); });
+
+  // Carrega as fontes escolhíveis (Título/Inferior) direto do Google Fonts,
+  // uma vez só — sem isso a prévia sempre mostra a fonte padrão do
+  // navegador, mesmo escolhendo outra no seletor.
+  useEffect(() => {
+    const id = "instagram-dark-google-fonts";
+    if (document.getElementById(id)) return;
+    const link = document.createElement("link");
+    link.id = id;
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Montserrat:wght@700&family=Oswald:wght@700&family=Poppins:wght@700&family=Raleway:wght@700&display=swap";
+    document.head.appendChild(link);
+  }, []);
 
   async function uploadFile(file: File, onDone: (url: string) => void) {
     const fd = new FormData();
@@ -958,6 +971,7 @@ export default function InstagramDarkPage() {
                         style={{
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
                           color: titleColor, fontSize: `${titleFontSize * 3.6}px`,
+                          fontFamily: FONT_CSS_FAMILY[titleFont] || "inherit",
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
@@ -975,6 +989,7 @@ export default function InstagramDarkPage() {
                         style={{
                           left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)",
                           color: bottomColor, fontSize: `${bottomFontSize * 3.6}px`,
+                          fontFamily: FONT_CSS_FAMILY[bottomFont] || "inherit",
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
