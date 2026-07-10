@@ -17,8 +17,10 @@ import logging
 import os
 import tempfile
 import uuid
+from io import BytesIO
 from typing import List, Optional
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from PIL import Image, ImageDraw, ImageFont
@@ -47,7 +49,7 @@ _job_state: dict[str, dict] = {}
 
 class BatchEditRequest(BaseModel):
     videos: List[str]              # URLs já públicas no R2 (Reels selecionados OU upload novo)
-    zoom: float = 100.0            # % — 100 = encaixa o vídeo inteiro no canvas, >100 aproxima e corta
+    zoom: float = 100.0            # % — usado só quando border_mode="manual"
     pos_x: float = 50.0            # % — posição horizontal (0=esquerda, 50=centro, 100=direita)
     pos_y: float = 50.0            # % — posição vertical (0=topo, 50=centro, 100=rodapé)
     border_color: str = "#ffffff"  # cor de preenchimento das bordas, em hex
@@ -55,17 +57,29 @@ class BatchEditRequest(BaseModel):
     fill_bottom_pct: float = 0.0   # % do vídeo ORIGINAL cortado no rodapé
     fill_mode: str = "manual"      # "automatico" ainda não implementado nessa fase — cai pro manual
 
+    # "manual" = usa o campo `zoom` literalmente pra todos (pode gerar
+    # bordas de tamanhos diferentes se os vídeos tiverem proporções
+    # diferentes). "automatico" = calcula o zoom SEPARADAMENTE pra cada
+    # vídeo, de forma que a borda final bata sempre com `border_target_pct`,
+    # não importa a proporção original de cada vídeo.
+    border_mode: str = "manual"
+    border_target_pct: float = 10.0  # % de borda desejada (topo+rodapé juntos), só usado no modo automático
+
     # ── Fase 2: Título (cicla 1 linha por vídeo) + Texto inferior (fixo em todos) ──
+    # Cada um pode ser TEXTO ou IMAGEM — se a URL de imagem vier preenchida,
+    # ela tem prioridade sobre o texto correspondente.
     title_lines: List[str] = []        # cada linha vira o título de 1 vídeo, na ordem; cicla se faltar linha
+    title_image_url: Optional[str] = None
     title_x_pct: float = 50.0
     title_y_pct: float = 12.0
-    title_font_size_pct: float = 6.0   # % da altura do canvas
+    title_font_size_pct: float = 6.0   # também usado como LARGURA da imagem (% do canvas) quando title_image_url está setado
     title_color: str = "#ffffff"
 
     bottom_text: Optional[str] = None  # mesmo texto em TODOS os vídeos do lote
+    bottom_image_url: Optional[str] = None
     bottom_x_pct: float = 50.0
     bottom_y_pct: float = 88.0
-    bottom_font_size_pct: float = 4.5
+    bottom_font_size_pct: float = 4.5  # também usado como LARGURA da imagem quando bottom_image_url está setado
     bottom_color: str = "#ffffff"
 
 
@@ -178,26 +192,94 @@ def _draw_text_block(draw: "ImageDraw.ImageDraw", text: str, x_pct: float, y_pct
         draw.text((lx, ly), line, font=font, fill=(*color, 255))
 
 
-def _build_filter(src_w: int, src_h: int, req: BatchEditRequest) -> str:
-    """Monta a cadeia de filtros do FFmpeg pra encaixar o vídeo no canvas
-    1080x1920 com zoom/posição/bordas. Os números são calculados aqui em
-    Python (pixels concretos) em vez de expressões dentro do FFmpeg —
-    mais fácil de depurar e logar se algo sair errado."""
+async def _fetch_image(client: httpx.AsyncClient, url: str) -> Optional[Image.Image]:
+    """Baixa uma imagem (logo, foto de persona, etc) de uma URL pública do
+    R2 pra colar no overlay. Retorna None se falhar, em vez de derrubar o
+    processamento inteiro do vídeo por causa de UMA imagem."""
+    try:
+        res = await client.get(url, timeout=20)
+        if res.status_code != 200:
+            logger.error(f"[batch_editor] falha ao baixar imagem de overlay ({res.status_code}): {url}")
+            return None
+        return Image.open(BytesIO(res.content)).convert("RGBA")
+    except Exception as e:
+        logger.error(f"[batch_editor] erro ao baixar/abrir imagem de overlay {url}: {e}")
+        return None
 
-    # 1) Corte manual de topo/rodapé do vídeo ORIGINAL — remove legenda,
-    #    marca d'água ou faixa que já veio queimada no vídeo fonte.
-    #    Limitado a 45% de cada lado pra nunca zerar a imagem por engano.
+
+def _paste_image_block(canvas: Image.Image, img: Image.Image, x_pct: float, y_pct: float, width_pct: float) -> None:
+    """Cola uma imagem (com transparência preservada) centralizada no ponto
+    (x_pct, y_pct), redimensionada pra `width_pct` da largura do canvas,
+    mantendo a proporção original da imagem."""
+    target_w = max(10, int(CANVAS_W * width_pct / 100))
+    ratio = target_w / img.width
+    target_h = max(10, int(img.height * ratio))
+    resized = img.resize((target_w, target_h), Image.LANCZOS)
+
+    cx = CANVAS_W * (x_pct / 100)
+    cy = CANVAS_H * (y_pct / 100)
+    px = int(cx - target_w / 2)
+    py = int(cy - target_h / 2)
+
+    canvas.alpha_composite(resized, (px, py))
+
+
+def _cropped_source_dims(src_w: int, src_h: int, req: BatchEditRequest) -> tuple[int, int]:
+    """Dimensões do vídeo DEPOIS do corte manual de topo/rodapé (fill_top/
+    fill_bottom), mas ANTES de qualquer escala/zoom. Usado tanto no cálculo
+    do filtro final quanto no cálculo de zoom automático (border_mode)."""
     top_px = int(src_h * max(0.0, min(req.fill_top_pct, 45.0)) / 100)
     bottom_px = int(src_h * max(0.0, min(req.fill_bottom_pct, 45.0)) / 100)
     cropped_h = max(2, src_h - top_px - bottom_px)
+    return src_w, cropped_h
+
+
+def _compute_auto_zoom_pct(cw: int, ch: int, border_target_pct: float) -> float:
+    """Calcula o zoom (%) necessário PRA ESSE VÍDEO ESPECÍFICO de forma que
+    a borda final bata com border_target_pct, normalizando a diferença
+    entre vídeos de proporções diferentes (é isso que resolve o problema
+    de bordas desiguais entre vídeos no mesmo lote)."""
+    scale_base = min(CANVAS_W / cw, CANVAS_H / ch)
+    rendered_w = cw * scale_base
+    rendered_h = ch * scale_base
+    slack_w = CANVAS_W - rendered_w
+    slack_h = CANVAS_H - rendered_h
+
+    # O eixo com folga (slack positivo) é onde a borda aparece — o outro já
+    # encosta nas bordas do canvas quando zoom=100%.
+    if slack_h >= slack_w:
+        axis_canvas, axis_rendered_at_100 = CANVAS_H, rendered_h
+    else:
+        axis_canvas, axis_rendered_at_100 = CANVAS_W, rendered_w
+
+    target_total_border = axis_canvas * (border_target_pct * 2 / 100)  # os dois lados somados
+    target_total_border = max(0.0, min(target_total_border, axis_canvas * 0.9))  # limite de segurança
+
+    if axis_rendered_at_100 <= 0:
+        return 100.0
+
+    z = (axis_canvas - target_total_border) / axis_rendered_at_100
+    z_pct = z * 100.0
+    return max(20.0, min(z_pct, 400.0))  # limites de segurança pra não gerar um zoom absurdo
+
+
+def _build_filter(src_w: int, src_h: int, req: BatchEditRequest, effective_zoom_pct: float) -> str:
+    """Monta a cadeia de filtros do FFmpeg pra encaixar o vídeo no canvas
+    1080x1920 com zoom/posição/bordas. Os números são calculados aqui em
+    Python (pixels concretos) em vez de expressões dentro do FFmpeg —
+    mais fácil de depurar e logar se algo sair errado.
+    `effective_zoom_pct` já vem pronto de fora — pode ser o req.zoom
+    literal (modo manual) ou o zoom calculado por vídeo (modo automático)."""
+
+    # 1) Corte manual de topo/rodapé do vídeo ORIGINAL — remove legenda,
+    #    marca d'água ou faixa que já veio queimada no vídeo fonte.
+    src_w_c, cropped_h = _cropped_source_dims(src_w, src_h, req)
+    top_px = int(src_h * max(0.0, min(req.fill_top_pct, 45.0)) / 100)
     crop_source = f"crop={src_w}:{cropped_h}:0:{top_px}"
 
     # 2) Escala pra caber no canvas ("contain") + fator de zoom por cima.
-    #    zoom=100% -> cabe inteiro; zoom>100% -> fica maior que o canvas
-    #    (vai sobrar pra cortar no passo 4); zoom<100% -> sobra borda
-    #    (preenchida no passo 3).
     scale_base = min(CANVAS_W / src_w, CANVAS_H / cropped_h)
-    zoom_factor = max(req.zoom, 10.0) / 100.0
+    zoom_factor = max(effective_zoom_pct, 10.0) / 100.0
     scale = scale_base * zoom_factor
 
     new_w = max(2, int(round(src_w * scale / 2) * 2))   # sempre par — requisito do libx264
@@ -224,25 +306,36 @@ def _build_filter(src_w: int, src_h: int, req: BatchEditRequest) -> str:
     return f"{crop_source},{scale_filter},{pad_filter},{final_crop}"
 
 
-def _render_overlay_png(title_text: Optional[str], req: BatchEditRequest) -> Optional[bytes]:
-    """Gera um PNG transparente 1080x1920 com título (se houver, específico
-    desse vídeo) + texto inferior (se houver, igual em todos os vídeos).
-    Retorna None se não há nenhum texto pra desenhar — assim o FFmpeg nem
-    precisa do segundo input nesse caso."""
-    has_title = bool(title_text and title_text.strip())
-    has_bottom = bool(req.bottom_text and req.bottom_text.strip())
-    if not has_title and not has_bottom:
+async def _render_overlay_png(client: httpx.AsyncClient, title_text: Optional[str], req: BatchEditRequest) -> Optional[bytes]:
+    """Gera um PNG transparente 1080x1920 com título + texto inferior — cada
+    um podendo ser TEXTO ou IMAGEM (logo/foto). Retorna None se não há nada
+    pra desenhar, assim o FFmpeg nem precisa do segundo input nesse caso."""
+    has_title_text = bool(title_text and title_text.strip())
+    has_title_image = bool(req.title_image_url)
+    has_bottom_text = bool(req.bottom_text and req.bottom_text.strip())
+    has_bottom_image = bool(req.bottom_image_url)
+
+    if not any([has_title_text, has_title_image, has_bottom_text, has_bottom_image]):
         return None
 
     img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    if has_title:
+    # Imagem tem prioridade sobre texto em cada slot (título / inferior).
+    if has_title_image:
+        title_img = await _fetch_image(client, req.title_image_url)  # type: ignore
+        if title_img:
+            _paste_image_block(img, title_img, req.title_x_pct, req.title_y_pct, req.title_font_size_pct)
+    elif has_title_text:
         _draw_text_block(draw, title_text or "", req.title_x_pct, req.title_y_pct, req.title_font_size_pct, req.title_color)
-    if has_bottom:
+
+    if has_bottom_image:
+        bottom_img = await _fetch_image(client, req.bottom_image_url)  # type: ignore
+        if bottom_img:
+            _paste_image_block(img, bottom_img, req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct)
+    elif has_bottom_text:
         _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color)
 
-    from io import BytesIO
     buf = BytesIO()
     img.save(buf, format="PNG")
     return buf.getvalue()
@@ -254,7 +347,17 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
     overlay_path = None
     try:
         src_w, src_h = await _probe_dimensions(video_url)
-        vf = _build_filter(src_w, src_h, req)
+
+        # Zoom efetivo: literal (manual) ou calculado por vídeo (automático,
+        # normaliza a borda entre vídeos de proporções diferentes).
+        if req.border_mode == "automatico":
+            cw, ch = _cropped_source_dims(src_w, src_h, req)
+            effective_zoom = _compute_auto_zoom_pct(cw, ch, req.border_target_pct)
+            logger.info(f"[batch_editor] job={job_id} idx={index} border_mode=automatico zoom_calculado={effective_zoom:.1f}%")
+        else:
+            effective_zoom = req.zoom
+
+        vf = _build_filter(src_w, src_h, req, effective_zoom)
         logger.info(f"[batch_editor] job={job_id} idx={index} filtro={vf}")
 
         # Título: cicla 1 linha por vídeo, na ordem em que os vídeos foram
@@ -263,7 +366,8 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
         if req.title_lines:
             title_text = req.title_lines[index % len(req.title_lines)]
 
-        overlay_png = _render_overlay_png(title_text, req)
+        async with httpx.AsyncClient() as client:
+            overlay_png = await _render_overlay_png(client, title_text, req)
 
         out_path = os.path.join(tempfile.gettempdir(), f"batch_{job_id}_{index}.mp4")
 
