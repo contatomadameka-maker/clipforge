@@ -24,6 +24,18 @@ const FONT_OPTIONS: { id: string; label: string }[] = [
   { id: "bebas_neue", label: "Bebas Neue" },
 ];
 
+// Nome CSS de cada fonte, pra aplicar na PRÉVIA (o vídeo final usa a fonte
+// baixada direto no backend — isso aqui é só pra mostrar algo parecido na tela).
+const FONT_CSS_FAMILY: Record<string, string> = {
+  sistema: "inherit",
+  poppins: "'IGDark Poppins', sans-serif",
+  montserrat: "'IGDark Montserrat', sans-serif",
+  raleway: "'IGDark Raleway', sans-serif",
+  oswald: "'IGDark Oswald', sans-serif",
+  anton: "'IGDark Anton', sans-serif",
+  bebas_neue: "'IGDark Bebas Neue', sans-serif",
+};
+
 // Download forçado via blob — necessário porque o atributo `download` do
 // <a> é IGNORADO pelo navegador quando o arquivo é de outro domínio (aqui,
 // R2 vs a própria página no Vercel). Sem isso, clicar só abre o vídeo em
@@ -123,7 +135,18 @@ export default function InstagramDarkPage() {
   const [borderMode, setBorderMode] = useState<"manual" | "automatico">("manual");
   const [borderTargetPct, setBorderTargetPct] = useState(10);
 
-  const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior">("bordas");
+  const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior" | "sobreposicao">("bordas");
+
+  const [overlayEnabled, setOverlayEnabled] = useState(false);
+  const [overlayImageUrl, setOverlayImageUrl] = useState("");
+  const [overlayImageUploading, setOverlayImageUploading] = useState(false);
+  const [overlayPosition, setOverlayPosition] = useState<"top_left" | "top_right" | "bottom_left" | "bottom_right" | "center" | "custom">("bottom_right");
+  const [overlayX, setOverlayX] = useState(85);
+  const [overlayY, setOverlayY] = useState(90);
+  const [overlayMargin, setOverlayMargin] = useState(20);
+  const [overlayWidth, setOverlayWidth] = useState(20);
+  const [overlayOpacity, setOverlayOpacity] = useState(100);
+  const overlayImageRef = useRef<HTMLInputElement>(null);
 
   const [titleEnabled, setTitleEnabled] = useState(false);
   const [titleMode, setTitleMode] = useState<"texto" | "imagem">("texto");
@@ -416,6 +439,13 @@ export default function InstagramDarkPage() {
           bottom_font_size_pct: bottomFontSize,
           bottom_color: bottomColor,
           bottom_font: bottomFont,
+          overlay_image_url: overlayEnabled && overlayImageUrl ? overlayImageUrl : null,
+          overlay_position: overlayPosition,
+          overlay_x_pct: overlayX,
+          overlay_y_pct: overlayY,
+          overlay_margin_px: overlayMargin,
+          overlay_width_pct: overlayWidth,
+          overlay_opacity_pct: overlayOpacity,
         }),
       });
       if (!res.ok) {
@@ -464,6 +494,27 @@ export default function InstagramDarkPage() {
   const previewTitleText = (effectivePreviewKey && titleOverrides[effectivePreviewKey]?.trim())
     || titleBlocks[0]
     || "";
+
+  // Prévia aproximada da posição da marca — converte os presets de canto
+  // (que no backend usam margem em pixels reais) pra % do canvas, só pra
+  // referência visual rápida.
+  const CANVAS_PREVIEW_W = 1080, CANVAS_PREVIEW_H = 1920;
+  function overlayPreviewXY(): { x: number; y: number } {
+    if (overlayPosition === "custom") return { x: overlayX, y: overlayY };
+    if (overlayPosition === "center") return { x: 50, y: 50 };
+    const marginXPct = (overlayMargin / CANVAS_PREVIEW_W) * 100;
+    const marginYPct = (overlayMargin / CANVAS_PREVIEW_H) * 100;
+    const halfWPct = overlayWidth / 2;
+    const halfHPct = halfWPct; // aproximação — não sabemos a altura real da imagem aqui
+    switch (overlayPosition) {
+      case "top_left": return { x: marginXPct + halfWPct, y: marginYPct + halfHPct };
+      case "top_right": return { x: 100 - marginXPct - halfWPct, y: marginYPct + halfHPct };
+      case "bottom_left": return { x: marginXPct + halfWPct, y: 100 - marginYPct - halfHPct };
+      case "bottom_right": return { x: 100 - marginXPct - halfWPct, y: 100 - marginYPct - halfHPct };
+      default: return { x: overlayX, y: overlayY };
+    }
+  }
+  const overlayPreview = overlayPreviewXY();
 
   return (
     <div className="min-h-screen relative overflow-hidden" style={{ background: "#0a0a0f", color: "#f0f0f5" }}>
@@ -934,6 +985,15 @@ export default function InstagramDarkPage() {
                       <img src={bottomImageUrl} alt="" className="absolute pointer-events-none"
                         style={{ left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)", width: `${bottomFontSize}%`, height: "auto" }} />
                     )}
+
+                    {/* Prévia da marca/logo (Fase 3) */}
+                    {overlayEnabled && overlayImageUrl && (
+                      <img src={overlayImageUrl} alt="" className="absolute pointer-events-none"
+                        style={{
+                          left: `${overlayPreview.x}%`, top: `${overlayPreview.y}%`, transform: "translate(-50%,-50%)",
+                          width: `${overlayWidth}%`, height: "auto", opacity: overlayOpacity / 100,
+                        }} />
+                    )}
                   </div>
                 </div>
                 <p className="text-[11px] text-[#55556a] text-center max-w-xs">
@@ -945,8 +1005,8 @@ export default function InstagramDarkPage() {
 
               {/* ── Coluna direita: config (Bordas / Título / Inferior) ── */}
               <div className="rounded-2xl p-5 flex flex-col gap-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                <div className="flex gap-1 p-1 rounded-[10px]" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-                  {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }].map(t => (
+                <div className="flex gap-1 p-1 rounded-[10px] flex-wrap" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                  {[{ id: "bordas", label: "Bordas" }, { id: "titulo", label: "Título" }, { id: "inferior", label: "Inferior" }, { id: "sobreposicao", label: "Marca" }].map(t => (
                     <button key={t.id} type="button" onClick={() => setConfigTab(t.id as any)}
                       className="flex-1 px-2 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none transition-all"
                       style={configTab === t.id ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
@@ -1206,6 +1266,87 @@ export default function InstagramDarkPage() {
                             </div>
                           </div>
                         )}
+                      </>
+                    )}
+                  </>
+                )}
+
+                {configTab === "sobreposicao" && (
+                  <>
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-medium text-[#9090a8]">Marca/logo (igual em todos)</label>
+                      <button type="button" onClick={() => setOverlayEnabled(v => !v)}
+                        className="w-9 h-5 rounded-full cursor-pointer border-none relative flex-shrink-0"
+                        style={{ background: overlayEnabled ? "#7c6df5" : "rgba(255,255,255,0.15)" }}>
+                        <span className="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" style={{ left: overlayEnabled ? "18px" : "2px" }} />
+                      </button>
+                    </div>
+                    {overlayEnabled && (
+                      <>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Imagem (logo, marca-d'água, etc)</label>
+                          <div onClick={() => overlayImageRef.current?.click()}
+                            className="flex items-center gap-3 px-3 py-2.5 rounded-[8px] cursor-pointer"
+                            style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                            {overlayImageUrl ? <img src={overlayImageUrl} className="w-9 h-9 rounded object-cover" alt="" /> : <span>🏷️</span>}
+                            <span className="text-[11px] text-[#9090a8]">
+                              {overlayImageUploading ? "Enviando..." : overlayImageUrl ? "Enviada — clique pra trocar" : "Clique pra enviar"}
+                            </span>
+                          </div>
+                          <input ref={overlayImageRef} type="file" accept="image/*" className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadOverlayImage(f, setOverlayImageUrl, setOverlayImageUploading); }} />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-2">Posição</label>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            <button type="button" onClick={() => setOverlayPosition("top_left")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "top_left" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>↖ Sup. esq.</button>
+                            <button type="button" onClick={() => setOverlayPosition("center")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "center" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>● Centro</button>
+                            <button type="button" onClick={() => setOverlayPosition("top_right")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "top_right" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>↗ Sup. dir.</button>
+                            <button type="button" onClick={() => setOverlayPosition("bottom_left")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "bottom_left" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>↙ Inf. esq.</button>
+                            <button type="button" onClick={() => setOverlayPosition("custom")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "custom" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>✥ Livre</button>
+                            <button type="button" onClick={() => setOverlayPosition("bottom_right")}
+                              className="py-2 rounded-[8px] text-[10px] cursor-pointer border-none"
+                              style={overlayPosition === "bottom_right" ? { background: "#7c6df5", color: "#fff" } : { background: "rgba(255,255,255,0.05)", color: "#9090a8" }}>↘ Inf. dir.</button>
+                          </div>
+                        </div>
+
+                        {overlayPosition === "custom" ? (
+                          <>
+                            <div>
+                              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {overlayX}%</label>
+                              <input type="range" min={0} max={100} value={overlayX} onChange={e => setOverlayX(Number(e.target.value))} className="w-full" />
+                            </div>
+                            <div>
+                              <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição Y: {overlayY}%</label>
+                              <input type="range" min={0} max={100} value={overlayY} onChange={e => setOverlayY(Number(e.target.value))} className="w-full" />
+                            </div>
+                          </>
+                        ) : overlayPosition !== "center" && (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Margem da borda: {overlayMargin}px</label>
+                            <input type="range" min={0} max={120} value={overlayMargin} onChange={e => setOverlayMargin(Number(e.target.value))} className="w-full" />
+                          </div>
+                        )}
+
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tamanho: {overlayWidth}% da largura</label>
+                          <input type="range" min={5} max={60} value={overlayWidth} onChange={e => setOverlayWidth(Number(e.target.value))} className="w-full" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Opacidade: {overlayOpacity}%</label>
+                          <input type="range" min={10} max={100} value={overlayOpacity} onChange={e => setOverlayOpacity(Number(e.target.value))} className="w-full" />
+                        </div>
                       </>
                     )}
                   </>
