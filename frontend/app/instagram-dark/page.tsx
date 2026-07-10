@@ -116,6 +116,11 @@ export default function InstagramDarkPage() {
   const [titleEnabled, setTitleEnabled] = useState(false);
   const [titleMode, setTitleMode] = useState<"texto" | "imagem">("texto");
   const [titleLinesText, setTitleLinesText] = useState("");
+  // Cada BLOCO (separado por linha em branco) vira o título de 1 vídeo,
+  // ciclando se faltar bloco. Enter simples DENTRO de um bloco só quebra a
+  // linha do mesmo título — não pula pro próximo vídeo. Isso resolve a
+  // ambiguidade entre "quebrar linha" e "próximo vídeo".
+  const titleBlocks = titleLinesText.split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
   const [titleImageUrl, setTitleImageUrl] = useState("");
   const [titleImageUploading, setTitleImageUploading] = useState(false);
   const [titleX, setTitleX] = useState(50);
@@ -376,7 +381,7 @@ export default function InstagramDarkPage() {
           fill_mode: fillMode,
           border_mode: borderMode,
           border_target_pct: borderTargetPct,
-          title_lines: titleEnabled && titleMode === "texto" ? titleLinesText.split("\n").map(l => l.trim()).filter(Boolean) : [],
+          title_lines: titleEnabled && titleMode === "texto" ? titleBlocks : [],
           title_image_url: titleEnabled && titleMode === "imagem" && titleImageUrl ? titleImageUrl : null,
           title_x_pct: titleX,
           title_y_pct: titleY,
@@ -828,7 +833,7 @@ export default function InstagramDarkPage() {
                     )}
 
                     {/* Prévia do título (texto ou imagem) */}
-                    {titleEnabled && titleMode === "texto" && titleLinesText.split("\n").find(l => l.trim()) && (
+                    {titleEnabled && titleMode === "texto" && titleBlocks[0] && (
                       <div className="absolute px-2 text-center font-bold pointer-events-none"
                         style={{
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
@@ -836,7 +841,7 @@ export default function InstagramDarkPage() {
                           textShadow: "0 0 3px #000, 0 0 3px #000, 0 0 3px #000, 1px 1px 2px #000",
                           whiteSpace: "pre", overflow: "visible", lineHeight: 1.25,
                         }}>
-                        {titleLinesText.split("\n").find(l => l.trim())}
+                        {titleBlocks[0]}
                       </div>
                     )}
                     {titleEnabled && titleMode === "imagem" && titleImageUrl && (
@@ -991,12 +996,12 @@ export default function InstagramDarkPage() {
 
                         {titleMode === "texto" ? (
                           <div>
-                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Um título por linha (cicla se houver mais vídeos)</label>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Título por vídeo — separe com uma linha em branco (Enter simples só quebra a linha do mesmo título)</label>
                             <textarea value={titleLinesText} onChange={e => setTitleLinesText(e.target.value)}
-                              placeholder={"esse vídeo fica mais tenso a cada segundo\neu não esperava por esse final"} rows={5}
+                              placeholder={"madame ka moda\nfeminina\n\npróximo vídeo aqui"} rows={6}
                               className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
                               style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-                            <p className="text-[10px] text-[#55556a] mt-1">{titleLinesText.split("\n").filter(l => l.trim()).length} título{titleLinesText.split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""}</p>
+                            <p className="text-[10px] text-[#55556a] mt-1">{titleBlocks.length} título{titleBlocks.length !== 1 ? "s" : ""}</p>
                           </div>
                         ) : (
                           <div>
