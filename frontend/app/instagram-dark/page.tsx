@@ -73,21 +73,50 @@ export default function InstagramDarkPage() {
   const [fillTop, setFillTop] = useState(12);
   const [fillBottom, setFillBottom] = useState(12);
 
+  // Modo "automatico" calcula o zoom SEPARADAMENTE por vídeo, pra igualar
+  // o tamanho da borda mesmo entre vídeos de proporções diferentes.
+  const [borderMode, setBorderMode] = useState<"manual" | "automatico">("manual");
+  const [borderTargetPct, setBorderTargetPct] = useState(10);
+
   const [configTab, setConfigTab] = useState<"bordas" | "titulo" | "inferior">("bordas");
 
   const [titleEnabled, setTitleEnabled] = useState(false);
+  const [titleMode, setTitleMode] = useState<"texto" | "imagem">("texto");
   const [titleLinesText, setTitleLinesText] = useState("");
+  const [titleImageUrl, setTitleImageUrl] = useState("");
+  const [titleImageUploading, setTitleImageUploading] = useState(false);
   const [titleX, setTitleX] = useState(50);
   const [titleY, setTitleY] = useState(12);
   const [titleFontSize, setTitleFontSize] = useState(6);
   const [titleColor, setTitleColor] = useState("#ffffff");
+  const titleImageRef = useRef<HTMLInputElement>(null);
 
   const [bottomEnabled, setBottomEnabled] = useState(false);
+  const [bottomMode, setBottomMode] = useState<"texto" | "imagem">("texto");
   const [bottomText, setBottomText] = useState("");
+  const [bottomImageUrl, setBottomImageUrl] = useState("");
+  const [bottomImageUploading, setBottomImageUploading] = useState(false);
   const [bottomX, setBottomX] = useState(50);
   const [bottomY, setBottomY] = useState(88);
   const [bottomFontSize, setBottomFontSize] = useState(4.5);
   const [bottomColor, setBottomColor] = useState("#ffffff");
+  const bottomImageRef = useRef<HTMLInputElement>(null);
+
+  async function uploadOverlayImage(file: File, onDone: (url: string) => void, setUploading: (v: boolean) => void) {
+    setUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch(`${API}/storage/upload/product-image`, { method: "POST", body: fd });
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      onDone(data.url);
+    } catch {
+      setBatchError("Falha ao enviar a imagem.");
+    } finally {
+      setUploading(false);
+    }
+  }
 
   const [batchProcessing, setBatchProcessing] = useState(false);
   const [batchProgress, setBatchProgress] = useState(0);
@@ -310,12 +339,16 @@ export default function InstagramDarkPage() {
           fill_top_pct: fillTop,
           fill_bottom_pct: fillBottom,
           fill_mode: fillMode,
-          title_lines: titleEnabled ? titleLinesText.split("\n").map(l => l.trim()).filter(Boolean) : [],
+          border_mode: borderMode,
+          border_target_pct: borderTargetPct,
+          title_lines: titleEnabled && titleMode === "texto" ? titleLinesText.split("\n").map(l => l.trim()).filter(Boolean) : [],
+          title_image_url: titleEnabled && titleMode === "imagem" && titleImageUrl ? titleImageUrl : null,
           title_x_pct: titleX,
           title_y_pct: titleY,
           title_font_size_pct: titleFontSize,
           title_color: titleColor,
-          bottom_text: bottomEnabled && bottomText.trim() ? bottomText.trim() : null,
+          bottom_text: bottomEnabled && bottomMode === "texto" && bottomText.trim() ? bottomText.trim() : null,
+          bottom_image_url: bottomEnabled && bottomMode === "imagem" && bottomImageUrl ? bottomImageUrl : null,
           bottom_x_pct: bottomX,
           bottom_y_pct: bottomY,
           bottom_font_size_pct: bottomFontSize,
@@ -732,8 +765,8 @@ export default function InstagramDarkPage() {
                       </div>
                     )}
 
-                    {/* Prévia do título (primeira linha cadastrada) */}
-                    {titleEnabled && titleLinesText.split("\n").find(l => l.trim()) && (
+                    {/* Prévia do título (texto ou imagem) */}
+                    {titleEnabled && titleMode === "texto" && titleLinesText.split("\n").find(l => l.trim()) && (
                       <div className="absolute px-2 text-center font-bold pointer-events-none"
                         style={{
                           left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)",
@@ -744,9 +777,13 @@ export default function InstagramDarkPage() {
                         {titleLinesText.split("\n").find(l => l.trim())}
                       </div>
                     )}
+                    {titleEnabled && titleMode === "imagem" && titleImageUrl && (
+                      <img src={titleImageUrl} alt="" className="absolute pointer-events-none"
+                        style={{ left: `${titleX}%`, top: `${titleY}%`, transform: "translate(-50%,-50%)", width: `${titleFontSize}%`, height: "auto" }} />
+                    )}
 
-                    {/* Prévia do texto inferior */}
-                    {bottomEnabled && bottomText.trim() && (
+                    {/* Prévia do texto inferior (texto ou imagem) */}
+                    {bottomEnabled && bottomMode === "texto" && bottomText.trim() && (
                       <div className="absolute px-2 text-center font-bold pointer-events-none"
                         style={{
                           left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)",
@@ -756,6 +793,10 @@ export default function InstagramDarkPage() {
                         }}>
                         {bottomText}
                       </div>
+                    )}
+                    {bottomEnabled && bottomMode === "imagem" && bottomImageUrl && (
+                      <img src={bottomImageUrl} alt="" className="absolute pointer-events-none"
+                        style={{ left: `${bottomX}%`, top: `${bottomY}%`, transform: "translate(-50%,-50%)", width: `${bottomFontSize}%`, height: "auto" }} />
                     )}
                   </div>
                 </div>
@@ -781,9 +822,37 @@ export default function InstagramDarkPage() {
                 {configTab === "bordas" && (
                   <>
                     <div>
-                      <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
-                      <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
+                      <p className="text-xs font-medium text-[#9090a8] mb-2">Tamanho da borda</p>
+                      <div className="flex gap-1 p-1 rounded-[10px] w-fit mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                        <button type="button" onClick={() => setBorderMode("manual")}
+                          className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                          style={borderMode === "manual" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                          Zoom manual
+                        </button>
+                        <button type="button" onClick={() => setBorderMode("automatico")}
+                          className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                          style={borderMode === "automatico" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                          Automático
+                        </button>
+                      </div>
+                      {borderMode === "manual" ? (
+                        <p className="text-[10px] text-[#55556a] mb-3">Zoom fixo pra todos — vídeos de proporções diferentes podem sair com bordas de tamanhos diferentes.</p>
+                      ) : (
+                        <p className="text-[10px] text-[#55556a] mb-3">Calcula o zoom individualmente por vídeo pra deixar a borda sempre do mesmo tamanho, mesmo com formatos de origem diferentes.</p>
+                      )}
                     </div>
+
+                    {borderMode === "manual" ? (
+                      <div>
+                        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Zoom: {zoom}%</label>
+                        <input type="range" min={20} max={200} value={zoom} onChange={e => setZoom(Number(e.target.value))} className="w-full" />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Borda alvo: {borderTargetPct}%</label>
+                        <input type="range" min={0} max={40} value={borderTargetPct} onChange={e => setBorderTargetPct(Number(e.target.value))} className="w-full" />
+                      </div>
+                    )}
                     <div>
                       <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição horizontal: {posX}%</label>
                       <input type="range" min={0} max={100} value={posX} onChange={e => setPosX(Number(e.target.value))} className="w-full" />
@@ -845,17 +914,49 @@ export default function InstagramDarkPage() {
                     </div>
                     {titleEnabled && (
                       <>
-                        <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Um título por linha (cicla se houver mais vídeos)</label>
-                          <textarea value={titleLinesText} onChange={e => setTitleLinesText(e.target.value)}
-                            placeholder={"esse vídeo fica mais tenso a cada segundo\neu não esperava por esse final"} rows={5}
-                            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
-                          <p className="text-[10px] text-[#55556a] mt-1">{titleLinesText.split("\n").filter(l => l.trim()).length} título{titleLinesText.split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""}</p>
+                        <div className="flex gap-1 p-1 rounded-[10px] w-fit" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                          <button type="button" onClick={() => setTitleMode("texto")}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                            style={titleMode === "texto" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                            Texto
+                          </button>
+                          <button type="button" onClick={() => setTitleMode("imagem")}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                            style={titleMode === "imagem" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                            Imagem
+                          </button>
                         </div>
+
+                        {titleMode === "texto" ? (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Um título por linha (cicla se houver mais vídeos)</label>
+                            <textarea value={titleLinesText} onChange={e => setTitleLinesText(e.target.value)}
+                              placeholder={"esse vídeo fica mais tenso a cada segundo\neu não esperava por esse final"} rows={5}
+                              className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+                              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+                            <p className="text-[10px] text-[#55556a] mt-1">{titleLinesText.split("\n").filter(l => l.trim()).length} título{titleLinesText.split("\n").filter(l => l.trim()).length !== 1 ? "s" : ""}</p>
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Imagem (logo, foto, etc — mesma em todos os vídeos)</label>
+                            <div onClick={() => titleImageRef.current?.click()}
+                              className="flex items-center gap-3 px-3 py-2.5 rounded-[8px] cursor-pointer"
+                              style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                              {titleImageUrl ? <img src={titleImageUrl} className="w-9 h-9 rounded object-cover" alt="" /> : <span>🖼️</span>}
+                              <span className="text-[11px] text-[#9090a8]">
+                                {titleImageUploading ? "Enviando..." : titleImageUrl ? "Enviada — clique pra trocar" : "Clique pra enviar"}
+                              </span>
+                            </div>
+                            <input ref={titleImageRef} type="file" accept="image/*" className="hidden"
+                              onChange={e => { const f = e.target.files?.[0]; if (f) uploadOverlayImage(f, setTitleImageUrl, setTitleImageUploading); }} />
+                          </div>
+                        )}
+
                         <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tamanho: {titleFontSize}%</label>
-                          <input type="range" min={2} max={12} step={0.5} value={titleFontSize} onChange={e => setTitleFontSize(Number(e.target.value))} className="w-full" />
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
+                            {titleMode === "imagem" ? `Largura da imagem: ${titleFontSize}%` : `Tamanho do texto: ${titleFontSize}%`}
+                          </label>
+                          <input type="range" min={2} max={40} step={0.5} value={titleFontSize} onChange={e => setTitleFontSize(Number(e.target.value))} className="w-full" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {titleX}%</label>
@@ -865,14 +966,16 @@ export default function InstagramDarkPage() {
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição Y: {titleY}%</label>
                           <input type="range" min={0} max={100} value={titleY} onChange={e => setTitleY(Number(e.target.value))} className="w-full" />
                         </div>
-                        <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
-                          <div className="flex items-center gap-2">
-                            <input type="color" value={titleColor} onChange={e => setTitleColor(e.target.value)}
-                              className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                            <span className="text-xs text-[#9090a8]">{titleColor}</span>
+                        {titleMode === "texto" && (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
+                            <div className="flex items-center gap-2">
+                              <input type="color" value={titleColor} onChange={e => setTitleColor(e.target.value)}
+                                className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                              <span className="text-xs text-[#9090a8]">{titleColor}</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </>
                     )}
                   </>
@@ -890,16 +993,48 @@ export default function InstagramDarkPage() {
                     </div>
                     {bottomEnabled && (
                       <>
-                        <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Texto</label>
-                          <textarea value={bottomText} onChange={e => setBottomText(e.target.value)}
-                            placeholder="Texto exibido em todos os vídeos" rows={3}
-                            className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
-                            style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+                        <div className="flex gap-1 p-1 rounded-[10px] w-fit" style={{ background: "rgba(255,255,255,0.04)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+                          <button type="button" onClick={() => setBottomMode("texto")}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                            style={bottomMode === "texto" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                            Texto
+                          </button>
+                          <button type="button" onClick={() => setBottomMode("imagem")}
+                            className="px-3 py-1.5 rounded-[8px] text-[11px] font-medium cursor-pointer border-none"
+                            style={bottomMode === "imagem" ? { background: "#7c6df5", color: "#fff" } : { background: "transparent", color: "#9090a8" }}>
+                            Imagem
+                          </button>
                         </div>
+
+                        {bottomMode === "texto" ? (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Texto</label>
+                            <textarea value={bottomText} onChange={e => setBottomText(e.target.value)}
+                              placeholder="Texto exibido em todos os vídeos" rows={3}
+                              className="w-full px-3 py-2.5 rounded-[8px] text-xs resize-none outline-none placeholder-[#3a3a4a]"
+                              style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)", lineHeight: "1.6" }} />
+                          </div>
+                        ) : (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Imagem (logo, foto, etc — mesma em todos os vídeos)</label>
+                            <div onClick={() => bottomImageRef.current?.click()}
+                              className="flex items-center gap-3 px-3 py-2.5 rounded-[8px] cursor-pointer"
+                              style={{ background: "rgba(124,109,245,0.05)", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                              {bottomImageUrl ? <img src={bottomImageUrl} className="w-9 h-9 rounded object-cover" alt="" /> : <span>🖼️</span>}
+                              <span className="text-[11px] text-[#9090a8]">
+                                {bottomImageUploading ? "Enviando..." : bottomImageUrl ? "Enviada — clique pra trocar" : "Clique pra enviar"}
+                              </span>
+                            </div>
+                            <input ref={bottomImageRef} type="file" accept="image/*" className="hidden"
+                              onChange={e => { const f = e.target.files?.[0]; if (f) uploadOverlayImage(f, setBottomImageUrl, setBottomImageUploading); }} />
+                          </div>
+                        )}
+
                         <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Tamanho: {bottomFontSize}%</label>
-                          <input type="range" min={2} max={12} step={0.5} value={bottomFontSize} onChange={e => setBottomFontSize(Number(e.target.value))} className="w-full" />
+                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
+                            {bottomMode === "imagem" ? `Largura da imagem: ${bottomFontSize}%` : `Tamanho do texto: ${bottomFontSize}%`}
+                          </label>
+                          <input type="range" min={2} max={40} step={0.5} value={bottomFontSize} onChange={e => setBottomFontSize(Number(e.target.value))} className="w-full" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {bottomX}%</label>
@@ -909,14 +1044,16 @@ export default function InstagramDarkPage() {
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição Y: {bottomY}%</label>
                           <input type="range" min={0} max={100} value={bottomY} onChange={e => setBottomY(Number(e.target.value))} className="w-full" />
                         </div>
-                        <div>
-                          <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
-                          <div className="flex items-center gap-2">
-                            <input type="color" value={bottomColor} onChange={e => setBottomColor(e.target.value)}
-                              className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                            <span className="text-xs text-[#9090a8]">{bottomColor}</span>
+                        {bottomMode === "texto" && (
+                          <div>
+                            <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Cor do texto</label>
+                            <div className="flex items-center gap-2">
+                              <input type="color" value={bottomColor} onChange={e => setBottomColor(e.target.value)}
+                                className="w-9 h-9 rounded-[8px] cursor-pointer border-none bg-transparent" />
+                              <span className="text-xs text-[#9090a8]">{bottomColor}</span>
+                            </div>
                           </div>
-                        </div>
+                        )}
                       </>
                     )}
                   </>
