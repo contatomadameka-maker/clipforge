@@ -21,6 +21,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
+from PIL import Image, ImageDraw, ImageFont
 
 from config import get_settings
 from routers.storage import get_r2_client
@@ -31,6 +32,12 @@ logger = logging.getLogger("batch_editor")
 
 CANVAS_W = 1080
 CANVAS_H = 1920
+
+# Fonte usada nos textos (Título/Inferior) — arquivo incluído no repo em
+# backend/assets/fonts/, pra não depender de fontes instaladas no sistema
+# do Render (ambientes mínimos costumam não ter nenhuma TTF disponível).
+_FONT_PATH = os.path.join(os.path.dirname(__file__), "..", "assets", "fonts", "DejaVuSans-Bold.ttf")
+_font_cache: dict[int, "ImageFont.FreeTypeFont"] = {}
 
 # Estado dos jobs em memória — mesmo padrão já usado no resto do backend
 # (kling_elements.py, etc). Em produção com múltiplos workers isso devia
@@ -47,6 +54,19 @@ class BatchEditRequest(BaseModel):
     fill_top_pct: float = 0.0      # % do vídeo ORIGINAL cortado no topo (remove legenda/marca antiga)
     fill_bottom_pct: float = 0.0   # % do vídeo ORIGINAL cortado no rodapé
     fill_mode: str = "manual"      # "automatico" ainda não implementado nessa fase — cai pro manual
+
+    # ── Fase 2: Título (cicla 1 linha por vídeo) + Texto inferior (fixo em todos) ──
+    title_lines: List[str] = []        # cada linha vira o título de 1 vídeo, na ordem; cicla se faltar linha
+    title_x_pct: float = 50.0
+    title_y_pct: float = 12.0
+    title_font_size_pct: float = 6.0   # % da altura do canvas
+    title_color: str = "#ffffff"
+
+    bottom_text: Optional[str] = None  # mesmo texto em TODOS os vídeos do lote
+    bottom_x_pct: float = 50.0
+    bottom_y_pct: float = 88.0
+    bottom_font_size_pct: float = 4.5
+    bottom_color: str = "#ffffff"
 
 
 async def _run(cmd: list[str]) -> tuple[int, bytes, bytes]:
@@ -81,6 +101,81 @@ def _hex_to_ffmpeg_color(hex_color: str) -> str:
     if len(h) != 6:
         h = "ffffff"
     return f"0x{h}"
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    h = (hex_color or "").lstrip("#")
+    if len(h) != 6:
+        h = "ffffff"
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore
+
+
+def _load_font(size_px: int) -> "ImageFont.FreeTypeFont":
+    size_px = max(10, size_px)
+    if size_px in _font_cache:
+        return _font_cache[size_px]
+    try:
+        font = ImageFont.truetype(_FONT_PATH, size_px)
+    except Exception as e:
+        # Sem a fonte no repo isso cai pro bitmap padrão do Pillow, que
+        # ignora o tamanho pedido e fica minúsculo/feio — sinal de que o
+        # arquivo backend/assets/fonts/DejaVuSans-Bold.ttf não foi commitado.
+        logger.error(f"[batch_editor] não consegui carregar a fonte em {_FONT_PATH}: {e} — usando fonte padrão (vai ficar pequena)")
+        font = ImageFont.load_default()
+    _font_cache[size_px] = font
+    return font
+
+
+def _wrap_text(draw: "ImageDraw.ImageDraw", text: str, font: "ImageFont.FreeTypeFont", max_width: float) -> list[str]:
+    """Quebra de linha simples baseada na largura real do texto renderizado."""
+    lines: list[str] = []
+    for paragraph in text.split("\n"):
+        words = paragraph.split(" ")
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            width = draw.textlength(candidate, font=font)
+            if width <= max_width or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+    return lines
+
+
+def _draw_text_block(draw: "ImageDraw.ImageDraw", text: str, x_pct: float, y_pct: float,
+                      font_size_pct: float, color_hex: str) -> None:
+    """Desenha um bloco de texto centralizado no ponto (x_pct, y_pct) do
+    canvas, com contorno preto pra legibilidade em cima de qualquer vídeo."""
+    if not text or not text.strip():
+        return
+
+    font_size = int(CANVAS_H * font_size_pct / 100)
+    font = _load_font(font_size)
+    max_width = CANVAS_W * 0.86
+    lines = _wrap_text(draw, text.strip(), font, max_width)
+
+    line_height = int(font_size * 1.25)
+    total_height = line_height * len(lines)
+    cx = CANVAS_W * (x_pct / 100)
+    top_y = CANVAS_H * (y_pct / 100) - total_height / 2
+
+    color = _hex_to_rgb(color_hex)
+    outline_w = max(2, font_size // 16)
+
+    for i, line in enumerate(lines):
+        line_w = draw.textlength(line, font=font)
+        lx = cx - line_w / 2
+        ly = top_y + i * line_height
+        # Contorno preto (desenha o texto deslocado em várias direções antes
+        # do texto principal) — garante leitura mesmo em fundo claro/vídeo.
+        for dx in (-outline_w, 0, outline_w):
+            for dy in (-outline_w, 0, outline_w):
+                if dx == 0 and dy == 0:
+                    continue
+                draw.text((lx + dx, ly + dy), line, font=font, fill=(0, 0, 0, 255))
+        draw.text((lx, ly), line, font=font, fill=(*color, 255))
 
 
 def _build_filter(src_w: int, src_h: int, req: BatchEditRequest) -> str:
@@ -129,23 +224,73 @@ def _build_filter(src_w: int, src_h: int, req: BatchEditRequest) -> str:
     return f"{crop_source},{scale_filter},{pad_filter},{final_crop}"
 
 
+def _render_overlay_png(title_text: Optional[str], req: BatchEditRequest) -> Optional[bytes]:
+    """Gera um PNG transparente 1080x1920 com título (se houver, específico
+    desse vídeo) + texto inferior (se houver, igual em todos os vídeos).
+    Retorna None se não há nenhum texto pra desenhar — assim o FFmpeg nem
+    precisa do segundo input nesse caso."""
+    has_title = bool(title_text and title_text.strip())
+    has_bottom = bool(req.bottom_text and req.bottom_text.strip())
+    if not has_title and not has_bottom:
+        return None
+
+    img = Image.new("RGBA", (CANVAS_W, CANVAS_H), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    if has_title:
+        _draw_text_block(draw, title_text or "", req.title_x_pct, req.title_y_pct, req.title_font_size_pct, req.title_color)
+    if has_bottom:
+        _draw_text_block(draw, req.bottom_text or "", req.bottom_x_pct, req.bottom_y_pct, req.bottom_font_size_pct, req.bottom_color)
+
+    from io import BytesIO
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRequest):
     state = _job_state[job_id]
     out_path = None
+    overlay_path = None
     try:
         src_w, src_h = await _probe_dimensions(video_url)
         vf = _build_filter(src_w, src_h, req)
         logger.info(f"[batch_editor] job={job_id} idx={index} filtro={vf}")
 
+        # Título: cicla 1 linha por vídeo, na ordem em que os vídeos foram
+        # enviados (se tiver menos linhas que vídeos, volta pro começo).
+        title_text = None
+        if req.title_lines:
+            title_text = req.title_lines[index % len(req.title_lines)]
+
+        overlay_png = _render_overlay_png(title_text, req)
+
         out_path = os.path.join(tempfile.gettempdir(), f"batch_{job_id}_{index}.mp4")
-        cmd = [
-            "ffmpeg", "-y", "-i", video_url,
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-            "-c:a", "aac", "-b:a", "128k",
-            "-threads", "1",
-            out_path,
-        ]
+
+        if overlay_png:
+            overlay_path = os.path.join(tempfile.gettempdir(), f"batch_{job_id}_{index}_overlay.png")
+            with open(overlay_path, "wb") as f:
+                f.write(overlay_png)
+
+            cmd = [
+                "ffmpeg", "-y", "-i", video_url, "-i", overlay_path,
+                "-filter_complex", f"[0:v]{vf}[base];[base][1:v]overlay=0:0[outv]",
+                "-map", "[outv]", "-map", "0:a?",
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k",
+                "-threads", "1",
+                out_path,
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-y", "-i", video_url,
+                "-vf", vf,
+                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "128k",
+                "-threads", "1",
+                out_path,
+            ]
+
         code, _, err = await _run(cmd)
         if code != 0:
             raise RuntimeError(f"ffmpeg falhou: {err.decode(errors='ignore')[-800:]}")
@@ -166,11 +311,12 @@ async def _process_one(job_id: str, index: int, video_url: str, req: BatchEditRe
         logger.error(f"[batch_editor] job={job_id} idx={index} falhou: {e}")
         state["results"][index] = {"original_url": video_url, "status": "error", "error": str(e)}
     finally:
-        if out_path and os.path.exists(out_path):
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
+        for p in (out_path, overlay_path):
+            if p and os.path.exists(p):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         state["completed"] += 1
         if state["completed"] >= state["total"]:
             state["status"] = "done"
