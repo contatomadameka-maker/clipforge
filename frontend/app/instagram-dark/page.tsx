@@ -159,9 +159,12 @@ export default function InstagramDarkPage() {
   // ── Facebook — busca por página, dentro do Editor em Massa ──
   const [facebookPageInput, setFacebookPageInput] = useState("");
   const [facebookLoading, setFacebookLoading] = useState(false);
+  const [facebookLoadingMore, setFacebookLoadingMore] = useState(false);
   const [facebookVideos, setFacebookVideos] = useState<ReelItem[]>([]);
   const [facebookSelected, setFacebookSelected] = useState<Set<string>>(new Set());
   const [facebookError, setFacebookError] = useState<string | null>(null);
+  const [facebookHasMore, setFacebookHasMore] = useState(false);
+  const FACEBOOK_PAGE_SIZE = 20;
 
   async function searchFacebookVideos() {
     if (!facebookPageInput.trim()) return;
@@ -169,8 +172,9 @@ export default function InstagramDarkPage() {
     setFacebookError(null);
     setFacebookVideos([]);
     setFacebookSelected(new Set());
+    setFacebookHasMore(false);
     try {
-      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=20`);
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=0`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao buscar vídeos dessa página do Facebook");
@@ -181,10 +185,35 @@ export default function InstagramDarkPage() {
         views: v.views, duration_seconds: v.duration_seconds,
       }));
       setFacebookVideos(items);
+      setFacebookHasMore(!!data.has_more);
     } catch (e: any) {
       setFacebookError(e.message);
     } finally {
       setFacebookLoading(false);
+    }
+  }
+
+  async function loadMoreFacebookVideos() {
+    if (!facebookPageInput.trim() || facebookLoadingMore) return;
+    setFacebookLoadingMore(true);
+    setFacebookError(null);
+    try {
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=${facebookVideos.length}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao carregar mais vídeos");
+      }
+      const data = await res.json();
+      const items: ReelItem[] = (data.videos || []).map((v: any) => ({
+        media_id: v.media_id, video_url: v.video_url, thumbnail_url: v.thumbnail_url,
+        views: v.views, duration_seconds: v.duration_seconds,
+      }));
+      setFacebookVideos(prev => [...prev, ...items]);
+      setFacebookHasMore(!!data.has_more);
+    } catch (e: any) {
+      setFacebookError(e.message);
+    } finally {
+      setFacebookLoadingMore(false);
     }
   }
   const [batchSelectedReels, setBatchSelectedReels] = useState<Set<string>>(new Set());
@@ -951,6 +980,13 @@ export default function InstagramDarkPage() {
                     </div>
                   ))}
                 </div>
+                {facebookHasMore && (
+                  <button type="button" onClick={loadMoreFacebookVideos} disabled={facebookLoadingMore}
+                    className="w-full mt-3 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
+                    style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
+                    {facebookLoadingMore ? "Carregando mais..." : "Carregar mais vídeos"}
+                  </button>
+                )}
                 <button type="button" onClick={() => goToEditorWith("facebook")} disabled={facebookSelected.size === 0}
                   className="w-full mt-4 h-11 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
                   style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
