@@ -24,6 +24,8 @@ openai==1.30.1
 elevenlabs==1.1.2
 # ── Imagem (usado no Instagram Dark — gera a faixa/molde) ──
 Pillow==10.4.0
+# ── Vídeo (usado no Facebook Dark — resolve link em vídeo baixável, roda local sem API terceira) ──
+yt-dlp
 # ── Utilitários ─────────────────────────────
 python-dotenv==1.0.1
 python-jose[cryptography]==3.3.0
