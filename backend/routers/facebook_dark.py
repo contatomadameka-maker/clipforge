@@ -69,7 +69,7 @@ async def list_videos(page_url: str, limit: int = 20):
             params={"token": settings.apify_api_token},
             json=payload,
         )
-        logger.info(f"[facebook-dark] run-sync-get-dataset-items http={res.status_code} body={res.text[:3000]}")
+        logger.info(f"[facebook-dark] run-sync-get-dataset-items http={res.status_code} body={res.text[:6000]}")
 
         # A Apify usa 201 Created pra indicar sucesso nesse endpoint
         # síncrono (não 200 OK) — aceita os dois.
@@ -83,22 +83,32 @@ async def list_videos(page_url: str, limit: int = 20):
 
         result = []
         for idx, item in enumerate(items):
-            # Esse Actor é diferente do anterior — tenta vários formatos
-            # de saída possíveis, do mais simples ao mais aninhado, já que
-            # ainda não confirmamos o schema exato dele:
-            video_url = None
+            # Confirmado testando: esse Actor devolve o JSON "cru" do
+            # GraphQL do Facebook (não um formato simplificado). Os campos
+            # de metadado já identificados:
+            #   - video.id, video.first_frame_thumbnail, video.playable_duration_in_ms (ms)
+            #   - playCountRounded (views)
+            # A URL de download do vídeo em si mora dentro de
+            # "playback_video" — ainda não confirmamos os nomes exatos dos
+            # campos aí dentro, então tenta os nomes mais usados pelo
+            # Facebook (browser_native_hd_url/sd_url) e cai pra outros
+            # candidatos genéricos se não bater.
+            video_obj = item.get("video") or {}
+            playback = item.get("playback_video") or {}
 
-            # (a) campo direto no item
-            video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "playAddr")
-
-            # (b) aninhado num objeto "video" ou "playback_video"
+            video_url = _first_present(
+                playback,
+                "browser_native_hd_url", "browser_native_sd_url",
+                "playable_url_quality_hd", "playable_url",
+                "hd_src", "sd_src", "url", "src", "progressive_url",
+            )
             if not video_url:
-                nested = item.get("video") or item.get("playback_video") or {}
-                if isinstance(nested, dict):
-                    video_url = _first_present(nested, "url", "downloadUrl", "hd_url", "sd_url", "playAddr")
-
-            # (c) formato estilo yt-dlp (lista "formats") — usado pelo Actor anterior
+                # (b) campo direto no item, ou dentro de "video"
+                video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "playAddr")
+            if not video_url and isinstance(video_obj, dict):
+                video_url = _first_present(video_obj, "url", "downloadUrl", "hd_url", "sd_url", "playAddr")
             if not video_url:
+                # (c) formato estilo yt-dlp (lista "formats") — usado pelo Actor anterior
                 formats = item.get("formats") or []
                 video_formats = [f for f in formats if f.get("url") and f.get("vcodec") and f.get("vcodec") != "none"]
                 chosen = max(video_formats, key=lambda f: f.get("tbr") or 0) if video_formats else None
@@ -107,12 +117,22 @@ async def list_videos(page_url: str, limit: int = 20):
                 video_url = (chosen or {}).get("url")
 
             if not video_url:
+                logger.warning(f"[facebook-dark] idx={idx} sem video_url reconhecido. Chaves de 'playback_video': {list(playback.keys()) if isinstance(playback, dict) else playback}")
                 continue  # item sem vídeo reconhecível — pula, mas não derruba o lote inteiro
 
-            thumb_url = _first_present(item, "thumbnail", "thumbnailUrl", "thumbnail_url", "previewUrl", "coverUrl") or ""
-            views_raw = _first_present(item, "playsCount", "playCount", "concurrent_view_count", "viewsCount", "views", "video_view_count") or 0
-            duration_raw = _first_present(item, "duration", "videoDuration", "durationSeconds", "video_duration") or 0
-            media_id = str(_first_present(item, "id", "videoId", "postId", "reelId") or f"{item.get('uploader_id') or item.get('pageId') or 'fb'}_{idx}")
+            thumb_url = (
+                (video_obj.get("first_frame_thumbnail") if isinstance(video_obj, dict) else None)
+                or _first_present(item, "thumbnail", "thumbnailUrl", "thumbnail_url", "previewUrl", "coverUrl")
+                or ""
+            )
+            views_raw = _first_present(item, "playCountRounded", "play_count_reduced", "playsCount", "playCount", "concurrent_view_count", "viewsCount", "views") or 0
+            duration_ms = (video_obj.get("playable_duration_in_ms") if isinstance(video_obj, dict) else None)
+            duration_raw = (duration_ms / 1000) if duration_ms else (_first_present(item, "duration", "videoDuration", "durationSeconds", "video_duration") or 0)
+            media_id = str(
+                (video_obj.get("id") if isinstance(video_obj, dict) else None)
+                or _first_present(item, "id", "videoId", "postId", "reelId")
+                or f"{item.get('uploader_id') or item.get('pageId') or 'fb'}_{idx}"
+            )
             title = _first_present(item, "title", "text", "caption", "description") or ""
 
             try:
