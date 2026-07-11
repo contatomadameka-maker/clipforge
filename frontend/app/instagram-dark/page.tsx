@@ -1640,7 +1640,7 @@ export default function InstagramDarkPage() {
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
                             {titleMode === "imagem" ? `Largura da imagem: ${titleFontSize}%` : `Tamanho do texto: ${titleFontSize}%`}
                           </label>
-                          <input type="range" min={2} max={40} step={0.5} value={titleFontSize} onChange={e => setTitleFontSize(Number(e.target.value))} className="w-full" />
+                          <input type="range" min={2} max={titleMode === "imagem" ? 100 : 40} step={0.5} value={titleFontSize} onChange={e => setTitleFontSize(Number(e.target.value))} className="w-full" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {titleX}%</label>
@@ -1740,7 +1740,7 @@ export default function InstagramDarkPage() {
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">
                             {bottomMode === "imagem" ? `Largura da imagem: ${bottomFontSize}%` : `Tamanho do texto: ${bottomFontSize}%`}
                           </label>
-                          <input type="range" min={2} max={40} step={0.5} value={bottomFontSize} onChange={e => setBottomFontSize(Number(e.target.value))} className="w-full" />
+                          <input type="range" min={2} max={bottomMode === "imagem" ? 100 : 40} step={0.5} value={bottomFontSize} onChange={e => setBottomFontSize(Number(e.target.value))} className="w-full" />
                         </div>
                         <div>
                           <label className="text-xs font-medium text-[#9090a8] block mb-1.5">Posição X: {bottomX}%</label>
