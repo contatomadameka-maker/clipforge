@@ -106,8 +106,26 @@ async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optio
             return None
         item = items[0]
         formats = item.get("formats") or []
-        video_formats = [f for f in formats if f.get("url") and f.get("vcodec") and f.get("vcodec") != "none"]
-        chosen = max(video_formats, key=lambda f: f.get("tbr") or 0) if video_formats else None
+
+        def has_video(f): return f.get("vcodec") and f.get("vcodec") != "none"
+        def has_audio(f): return f.get("acodec") and f.get("acodec") != "none"
+
+        # 1ª prioridade: formato COMBINADO (vídeo + áudio na mesma faixa) —
+        # o Facebook costuma servir vídeo e áudio separados (estilo DASH),
+        # então isso pode não existir. Se existir, é o ideal: 1 URL só, já
+        # com som.
+        combined = [f for f in formats if f.get("url") and has_video(f) and has_audio(f)]
+        if combined:
+            chosen = max(combined, key=lambda f: f.get("tbr") or 0)
+            return chosen.get("url")
+
+        # 2ª prioridade: só achou faixas separadas — pega a de vídeo de
+        # maior qualidade mesmo sem áudio embutido. Isso é o que estava
+        # causando os vídeos mudos.
+        video_only = [f for f in formats if f.get("url") and has_video(f)]
+        chosen = max(video_only, key=lambda f: f.get("tbr") or 0) if video_only else None
+        if chosen:
+            logger.warning(f"[facebook-dark] só achei vídeo sem áudio combinado pra {share_url} — formatos disponíveis: {[(f.get('vcodec'), f.get('acodec'), f.get('ext')) for f in formats]}")
         if not chosen and formats and formats[0].get("url"):
             chosen = formats[0]
         return (chosen or {}).get("url")
