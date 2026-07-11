@@ -2,19 +2,18 @@
 # backend/routers/facebook_dark.py
 # Facebook Dark — lista vídeos de uma Página pública do Facebook.
 #
-# Usa DOIS Actors da Apify em sequência, porque nenhum sozinho faz as
-# duas coisas que precisamos:
-#   1) DISCOVERY_ACTOR (apify/facebook-reels-scraper) — varre a página
-#      inteira e descobre a lista de reels (views, thumbnail, duração,
-#      link do post) — mas a URL de vídeo que ele devolve é um manifest
-#      DASH cru (dash_manifest_xml_string), não um arquivo baixável direto.
-#   2) RESOLVER_ACTOR (scraper-engine/facebook-videos-scraper) — recebe
-#      UM link de vídeo por vez e devolve o arquivo MP4 baixável de
-#      verdade (via lista "formats", estilo yt-dlp).
-#
-# Ou seja: descobre com o Actor 1, resolve cada um com o Actor 2.
-# Isso custa mais chamadas de API (1 + N) que o ideal, mas é o único
-# jeito de ter os dois: descoberta em massa E link de vídeo baixável.
+# Duas etapas, de fontes diferentes:
+#   1) DISCOVERY_ACTOR (Apify, apify/facebook-reels-scraper) — varre a
+#      página inteira e descobre a lista de reels (views, thumbnail,
+#      duração, link do post). Modelo "Pay per Result" — cobra do saldo,
+#      não exige assinatura de plataforma, funciona de boa.
+#   2) yt-dlp RODANDO NO NOSSO PRÓPRIO SERVIDOR — resolve cada link pro
+#      arquivo MP4 baixável de verdade. Testamos 3 Actors pagos da Apify
+#      pra essa etapa (scraper-engine, pocesar, bytepulselabs) e todos
+#      travaram pedindo assinatura da plataforma ("actor-is-not-rented")
+#      mesmo anunciados como baratos/pay-per-event — decidimos tirar
+#      terceiro da jogada nessa etapa e rodar localmente, sem custo de
+#      API nenhum (só o servidor que já pagamos no Render).
 #
 # NÃO tem processamento próprio de propósito — os vídeos encontrados
 # aqui alimentam o Editor em Massa (batch_editor.py), que já é
@@ -26,6 +25,7 @@ import logging
 from typing import List, Optional
 
 import httpx
+import yt_dlp
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -36,11 +36,11 @@ settings = get_settings()
 logger = logging.getLogger("facebook_dark")
 
 APIFY_BASE = "https://api.apify.com/v2"
-DISCOVERY_ACTOR = "apify~facebook-reels-scraper"          # descobre a lista de reels da página
-RESOLVER_ACTOR = "bytepulselabs~facebook-video-downloader"  # resolve 1 link -> vídeo baixável — modelo "Pay-per-event" ($0,006/execução + $0,06/10MB), NÃO exige assinatura de plataforma como os dois anteriores (que eram "aluguel mensal" e travaram com "actor-is-not-rented")
+DISCOVERY_ACTOR = "apify~facebook-reels-scraper"  # descobre a lista de reels da página (Pay per Result, sem assinatura)
 
-# Limita quantos vídeos resolvemos em paralelo por vez, pra não estourar
-# rate-limit da Apify nem gastar crédito rápido demais num teste errado.
+# Limita quantos vídeos resolvemos em paralelo por vez — o yt-dlp roda
+# em threads (é bloqueante), então isso também limita quantas threads
+# simultâneas o processo do backend usa por essa rota.
 _RESOLVE_CONCURRENCY = 5
 
 
@@ -88,65 +88,53 @@ async def _discover_reels(client: httpx.AsyncClient, page_url: str, limit: int) 
     return items
 
 
-async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optional[str]:
-    """Etapa 2 — resolve UM link de reel/vídeo pro arquivo MP4 baixável
-    de verdade, via bytepulselabs/facebook-video-downloader (modelo
-    Pay-per-event — não exige assinatura de plataforma).
-
-    A doc pública mostra um campo "videoUrl" direto na saída (não uma
-    lista "formats" como o Actor anterior) — mas mantém os outros
-    caminhos como fallback, caso o formato real seja diferente."""
+def _resolve_video_url_sync(share_url: str) -> Optional[str]:
+    """Roda o yt-dlp de verdade (bloqueante — por isso é chamado numa
+    thread separada, veja _resolve_video_url abaixo). Pede o formato que
+    já vem com vídeo E áudio juntos quando existir (evita o problema de
+    vídeo mudo que tivemos com os formatos separados estilo DASH);
+    cai pro "best" genérico se não achar um formato combinado."""
+    ydl_opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "format": "best[acodec!=none][vcodec!=none]/best",
+        "socket_timeout": 30,
+    }
     try:
-        res = await client.post(
-            f"{APIFY_BASE}/acts/{RESOLVER_ACTOR}/run-sync-get-dataset-items",
-            params={"token": settings.apify_api_token},
-            json={"startUrls": [{"url": share_url}]},
-        )
-        logger.info(f"[facebook-dark] resolve (bytepulselabs) http={res.status_code} body={res.text[:2000]}")
-        if res.status_code not in (200, 201):
-            logger.warning(f"[facebook-dark] resolve falhou ({res.status_code}) pra {share_url}: {res.text[:300]}")
-            return None
-        items = res.json()
-        if not items or not isinstance(items, list):
-            return None
-        item = items[0]
-
-        # Candidato principal: campo "videoUrl" direto (confirmado na doc
-        # pública do Actor). Fallbacks abaixo cobrem formatos alternativos
-        # caso a saída real seja diferente do documentado.
-        video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "url")
-        if not video_url:
-            nested = item.get("video") or {}
-            if isinstance(nested, dict):
-                video_url = _first_present(nested, "url", "downloadUrl", "hd_url", "sd_url")
-        if not video_url:
-            formats = item.get("formats") or []
-
-            def has_video(f): return f.get("vcodec") and f.get("vcodec") != "none"
-            def has_audio(f): return f.get("acodec") and f.get("acodec") != "none"
-
-            combined = [f for f in formats if f.get("url") and has_video(f) and has_audio(f)]
-            if combined:
-                video_url = max(combined, key=lambda f: f.get("tbr") or 0).get("url")
-            else:
-                video_only = [f for f in formats if f.get("url") and has_video(f)]
-                if video_only:
-                    video_url = max(video_only, key=lambda f: f.get("tbr") or 0).get("url")
-                    logger.warning(f"[facebook-dark] só achei vídeo sem áudio combinado pra {share_url}")
-
-        if not video_url:
-            logger.warning(f"[facebook-dark] não achei video_url em nenhum caminho conhecido. Chaves do item: {list(item.keys())}")
-        return video_url
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(share_url, download=False)
+            if not info:
+                return None
+            video_url = info.get("url")
+            if not video_url:
+                # Alguns vídeos só devolvem a lista "formats" sem um "url"
+                # no nível raiz — pega o melhor formato combinado de lá.
+                formats = info.get("formats") or []
+                combined = [f for f in formats if f.get("url") and f.get("acodec") not in (None, "none") and f.get("vcodec") not in (None, "none")]
+                if combined:
+                    video_url = max(combined, key=lambda f: f.get("tbr") or 0).get("url")
+                elif formats:
+                    video_url = formats[-1].get("url")  # yt-dlp costuma listar do pior pro melhor
+                    logger.warning(f"[facebook-dark] yt-dlp só achei formato sem confirmação de áudio combinado pra {share_url}")
+            return video_url
     except Exception as e:
-        logger.warning(f"[facebook-dark] erro ao resolver {share_url}: {e}")
+        logger.warning(f"[facebook-dark] yt-dlp falhou pra {share_url}: {e}")
         return None
+
+
+async def _resolve_video_url(share_url: str) -> Optional[str]:
+    """Wrapper async — roda o yt-dlp (bloqueante) numa thread separada
+    pra não travar o loop de eventos do FastAPI enquanto resolve."""
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, _resolve_video_url_sync, share_url)
 
 
 @router.get("/list-videos", response_model=ListVideosResponse)
 async def list_videos(page_url: str, limit: int = 20, offset: int = 0):
     """Busca os vídeos mais recentes de uma Página pública do Facebook —
-    descobre a lista (Actor 1) e resolve cada link pro vídeo baixável
-    (Actor 2), em paralelo com limite de concorrência.
+    descobre a lista (Actor da Apify) e resolve cada link pro vídeo
+    baixável (yt-dlp local), em paralelo com limite de concorrência.
 
     `offset` permite "carregar mais": pede resultsLimit=(offset+limit) na
     descoberta (que sempre varre do topo, não tem cursor de verdade) mas
@@ -200,7 +188,7 @@ async def list_videos(page_url: str, limit: int = 20, offset: int = 0):
 
         async def resolve_one(meta: dict):
             async with semaphore:
-                video_url = await _resolve_video_url(client, meta["share_url"])
+                video_url = await _resolve_video_url(meta["share_url"])
                 return meta, video_url
 
         resolved = await asyncio.gather(*[resolve_one(m) for m in parsed])
