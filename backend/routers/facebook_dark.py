@@ -55,6 +55,7 @@ class VideoItem(BaseModel):
 
 class ListVideosResponse(BaseModel):
     videos: List[VideoItem]
+    has_more: bool = False
 
 
 def _first_present(d: dict, *keys: str):
@@ -116,21 +117,27 @@ async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optio
 
 
 @router.get("/list-videos", response_model=ListVideosResponse)
-async def list_videos(page_url: str, limit: int = 20):
+async def list_videos(page_url: str, limit: int = 20, offset: int = 0):
     """Busca os vídeos mais recentes de uma Página pública do Facebook —
     descobre a lista (Actor 1) e resolve cada link pro vídeo baixável
-    (Actor 2), em paralelo com limite de concorrência."""
+    (Actor 2), em paralelo com limite de concorrência.
+
+    `offset` permite "carregar mais": pede resultsLimit=(offset+limit) na
+    descoberta (que sempre varre do topo, não tem cursor de verdade) mas
+    só RESOLVE os itens novos (a partir do offset) — assim não paga de
+    novo pra resolver vídeo que o usuário já tinha carregado antes."""
     if not settings.apify_api_token:
         raise HTTPException(status_code=503, detail="APIFY_API_TOKEN não configurado ainda no backend.")
 
     async with httpx.AsyncClient(timeout=120) as client:
-        raw_items = await _discover_reels(client, page_url, limit)
+        raw_items = await _discover_reels(client, page_url, offset + limit)
+        raw_items_page = raw_items[offset:offset + limit]
 
         # Monta a lista de metadado (sem vídeo ainda) a partir do que a
         # etapa de descoberta já devolveu — esses campos já confirmamos
         # testando que existem de verdade.
         parsed = []
-        for idx, item in enumerate(raw_items):
+        for idx, item in enumerate(raw_items_page):
             video_obj = item.get("video") or {}
             share_url = _first_present(item, "shareable_url", "topLevelReelUrl") or (
                 (item.get("if_should_change_url_for_reels") or {}).get("shareable_url")
@@ -153,9 +160,13 @@ async def list_videos(page_url: str, limit: int = 20):
                 "title": title[:200],
             })
 
+        # Se a Actor devolveu MENOS itens do que pedimos (offset+limit),
+        # é sinal de que já chegou no fim da lista de reels da página.
+        has_more = len(raw_items) >= (offset + limit)
+
         if not parsed:
-            logger.error(f"[facebook-dark] etapa de descoberta não achou nenhum link de reel. 1º item bruto: {raw_items[0] if raw_items else 'lista vazia'}")
-            return ListVideosResponse(videos=[])
+            logger.error(f"[facebook-dark] etapa de descoberta não achou nenhum link de reel. 1º item bruto: {raw_items_page[0] if raw_items_page else 'lista vazia (offset pode ter passado do fim)'}")
+            return ListVideosResponse(videos=[], has_more=has_more)
 
         # Etapa 2 — resolve os vídeos em paralelo, com limite de
         # concorrência (evita rate-limit e explosão de custo simultâneo).
@@ -185,4 +196,4 @@ async def list_videos(page_url: str, limit: int = 20):
         if not result:
             raise HTTPException(status_code=422, detail=f"Encontrei {len(parsed)} reels na página, mas não consegui resolver o vídeo baixável de nenhum deles. Confira os logs do Render pra mais detalhes.")
 
-        return ListVideosResponse(videos=result)
+        return ListVideosResponse(videos=result, has_more=has_more)
