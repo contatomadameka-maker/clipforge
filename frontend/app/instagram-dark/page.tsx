@@ -719,9 +719,51 @@ export default function InstagramDarkPage() {
   // QUAL vídeo aparece na prévia — isso não muda o que é aplicado, já que
   // a configuração é sempre a mesma pra todos os vídeos do lote.
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewVideoDims, setPreviewVideoDims] = useState<{ w: number; h: number } | null>(null);
+
+  // Calcula exatamente a mesma matemática que o backend usa em
+  // _build_filter (batch_editor.py) — corte de topo/rodapé, escala
+  // "contain" + zoom, pad/crop conforme a posição — pra prévia bater
+  // 1:1 com o resultado real do FFmpeg. Em vez de pré-cortar o vídeo
+  // (precisaria de uma segunda camada de clip), posiciona o vídeo
+  // INTEIRO deslocado pra cima pelo equivalente ao corte de topo já
+  // escalado — o conteúdo cortado fica empurrado pra fora da área
+  // visível do quadro, com o mesmo efeito visual final.
+  function computePreviewVideoBox(srcW: number, srcH: number) {
+    const CANVAS_W = 1080, CANVAS_H = 1920;
+    const topPx = srcH * Math.max(0, Math.min(fillTop, 45)) / 100;
+    const bottomPx = srcH * Math.max(0, Math.min(fillBottom, 45)) / 100;
+    const croppedH = Math.max(2, srcH - topPx - bottomPx);
+
+    const scaleBase = Math.min(CANVAS_W / srcW, CANVAS_H / croppedH);
+    const zoomFactor = Math.max(zoom, 10) / 100;
+    const scale = scaleBase * zoomFactor;
+
+    const newW = srcW * scale;
+    const newH = croppedH * scale;
+    const padW = Math.max(newW, CANVAS_W);
+    const padH = Math.max(newH, CANVAS_H);
+    const padX = (padW - newW) * (posX / 100);
+    const padY = (padH - newH) * (posY / 100);
+    const cropX = (padW - CANVAS_W) * (posX / 100);
+    const cropY = (padH - CANVAS_H) * (posY / 100);
+
+    const fullRenderedW = srcW * scale;
+    const fullRenderedH = srcH * scale;
+    const left = padX - cropX;
+    const top = padY - cropY - topPx * scale;
+
+    return {
+      widthPct: (fullRenderedW / CANVAS_W) * 100,
+      heightPct: (fullRenderedH / CANVAS_H) * 100,
+      leftPct: (left / CANVAS_W) * 100,
+      topPct: (top / CANVAS_H) * 100,
+    };
+  }
   const effectivePreviewUrl = (previewUrl && batchVideoUrls.includes(previewUrl))
     ? previewUrl
     : (batchVideoUrls[0] || null);
+  useEffect(() => { setPreviewVideoDims(null); }, [effectivePreviewUrl]);
   const effectivePreviewKey = batchItems.find(i => i.url === effectivePreviewUrl)?.key;
   const previewTitleText = (effectivePreviewKey && titleOverrides[effectivePreviewKey]?.trim())
     || titleBlocks[0]
@@ -1390,17 +1432,19 @@ export default function InstagramDarkPage() {
                         loop
                         playsInline
                         controls
-                        className="absolute inset-0 w-full h-full object-contain"
-                        style={{
-                          // Corta visualmente o topo/rodapé do vídeo ORIGINAL,
-                          // igual ao que o FFmpeg faz de verdade no backend.
-                          clipPath: `inset(${fillTop}% 0 ${fillBottom}% 0)`,
-                          // Zoom via transform:scale — diferente de mexer em
-                          // width/height em %, isso funciona igual pra cima
-                          // (>100%) e pra baixo (<100%). Posição desloca o
-                          // enquadramento dentro da área com zoom aplicado.
-                          transform: `translate(${(50 - posX) * 0.6}%, ${(50 - posY) * 0.6}%) scale(${zoom / 100})`,
-                          transformOrigin: "center center",
+                        onLoadedMetadata={e => setPreviewVideoDims({ w: e.currentTarget.videoWidth, h: e.currentTarget.videoHeight })}
+                        className="absolute"
+                        style={previewVideoDims ? (() => {
+                          const box = computePreviewVideoBox(previewVideoDims.w, previewVideoDims.h);
+                          return {
+                            width: `${box.widthPct}%`, height: `${box.heightPct}%`,
+                            left: `${box.leftPct}%`, top: `${box.topPct}%`,
+                          };
+                        })() : {
+                          // Enquanto os metadados reais não carregam, mostra
+                          // preenchendo o quadro todo — evita salto visual
+                          // grande assim que o vídeo carrega de verdade.
+                          width: "100%", height: "100%", left: 0, top: 0, objectFit: "contain",
                         }}
                       />
                     ) : (
