@@ -37,7 +37,7 @@ logger = logging.getLogger("facebook_dark")
 
 APIFY_BASE = "https://api.apify.com/v2"
 DISCOVERY_ACTOR = "apify~facebook-reels-scraper"          # descobre a lista de reels da página
-RESOLVER_ACTOR = "pocesar~download-facebook-video"  # resolve 1 link -> vídeo baixável ($5/mês + uso — o "scraper-engine" anterior exigia assinatura Starter de $29 da própria Apify, travou)
+RESOLVER_ACTOR = "bytepulselabs~facebook-video-downloader"  # resolve 1 link -> vídeo baixável — modelo "Pay-per-event" ($0,006/execução + $0,06/10MB), NÃO exige assinatura de plataforma como os dois anteriores (que eram "aluguel mensal" e travaram com "actor-is-not-rented")
 
 # Limita quantos vídeos resolvemos em paralelo por vez, pra não estourar
 # rate-limit da Apify nem gastar crédito rápido demais num teste errado.
@@ -90,24 +90,19 @@ async def _discover_reels(client: httpx.AsyncClient, page_url: str, limit: int) 
 
 async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optional[str]:
     """Etapa 2 — resolve UM link de reel/vídeo pro arquivo MP4 baixável
-    de verdade, via pocesar/download-facebook-video.
+    de verdade, via bytepulselabs/facebook-video-downloader (modelo
+    Pay-per-event — não exige assinatura de plataforma).
 
-    ⚠️ Esse Actor é diferente do anterior (scraper-engine) — schema de
-    entrada/saída ainda não 100% confirmado na prática, só na
-    documentação pública. A doc menciona que precisa de proxy
-    RESIDENCIAL pra acessar o Facebook, então já mando isso configurado
-    (pode custar um pouco mais que proxy comum, mas sem ele o Actor
-    provavelmente falha)."""
+    A doc pública mostra um campo "videoUrl" direto na saída (não uma
+    lista "formats" como o Actor anterior) — mas mantém os outros
+    caminhos como fallback, caso o formato real seja diferente."""
     try:
         res = await client.post(
             f"{APIFY_BASE}/acts/{RESOLVER_ACTOR}/run-sync-get-dataset-items",
             params={"token": settings.apify_api_token},
-            json={
-                "startUrls": [{"url": share_url}],
-                "proxyConfiguration": {"useApifyProxy": True, "apifyProxyGroups": ["RESIDENTIAL"]},
-            },
+            json={"startUrls": [{"url": share_url}]},
         )
-        logger.info(f"[facebook-dark] resolve (pocesar) http={res.status_code} body={res.text[:2000]}")
+        logger.info(f"[facebook-dark] resolve (bytepulselabs) http={res.status_code} body={res.text[:2000]}")
         if res.status_code not in (200, 201):
             logger.warning(f"[facebook-dark] resolve falhou ({res.status_code}) pra {share_url}: {res.text[:300]}")
             return None
@@ -116,9 +111,9 @@ async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optio
             return None
         item = items[0]
 
-        # Formato ainda não confirmado — tenta os candidatos mais prováveis
-        # (campo direto, dentro de "video", ou lista "formats" estilo
-        # yt-dlp igual o Actor anterior usava).
+        # Candidato principal: campo "videoUrl" direto (confirmado na doc
+        # pública do Actor). Fallbacks abaixo cobrem formatos alternativos
+        # caso a saída real seja diferente do documentado.
         video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "url")
         if not video_url:
             nested = item.get("video") or {}
