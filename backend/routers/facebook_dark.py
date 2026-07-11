@@ -37,7 +37,7 @@ logger = logging.getLogger("facebook_dark")
 
 APIFY_BASE = "https://api.apify.com/v2"
 DISCOVERY_ACTOR = "apify~facebook-reels-scraper"          # descobre a lista de reels da página
-RESOLVER_ACTOR = "scraper-engine~facebook-videos-scraper"  # resolve 1 link -> vídeo baixável
+RESOLVER_ACTOR = "pocesar~download-facebook-video"  # resolve 1 link -> vídeo baixável ($5/mês + uso — o "scraper-engine" anterior exigia assinatura Starter de $29 da própria Apify, travou)
 
 # Limita quantos vídeos resolvemos em paralelo por vez, pra não estourar
 # rate-limit da Apify nem gastar crédito rápido demais num teste errado.
@@ -90,14 +90,24 @@ async def _discover_reels(client: httpx.AsyncClient, page_url: str, limit: int) 
 
 async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optional[str]:
     """Etapa 2 — resolve UM link de reel/vídeo pro arquivo MP4 baixável
-    de verdade, usando o mesmo Actor/lógica que já validamos funcionando
-    (formato estilo yt-dlp, campo 'formats')."""
+    de verdade, via pocesar/download-facebook-video.
+
+    ⚠️ Esse Actor é diferente do anterior (scraper-engine) — schema de
+    entrada/saída ainda não 100% confirmado na prática, só na
+    documentação pública. A doc menciona que precisa de proxy
+    RESIDENCIAL pra acessar o Facebook, então já mando isso configurado
+    (pode custar um pouco mais que proxy comum, mas sem ele o Actor
+    provavelmente falha)."""
     try:
         res = await client.post(
             f"{APIFY_BASE}/acts/{RESOLVER_ACTOR}/run-sync-get-dataset-items",
             params={"token": settings.apify_api_token},
-            json={"urls": [share_url]},
+            json={
+                "startUrls": [{"url": share_url}],
+                "proxyConfiguration": {"useApifyProxy": True, "apifyProxyGroups": ["RESIDENTIAL"]},
+            },
         )
+        logger.info(f"[facebook-dark] resolve (pocesar) http={res.status_code} body={res.text[:2000]}")
         if res.status_code not in (200, 201):
             logger.warning(f"[facebook-dark] resolve falhou ({res.status_code}) pra {share_url}: {res.text[:300]}")
             return None
@@ -105,30 +115,33 @@ async def _resolve_video_url(client: httpx.AsyncClient, share_url: str) -> Optio
         if not items or not isinstance(items, list):
             return None
         item = items[0]
-        formats = item.get("formats") or []
 
-        def has_video(f): return f.get("vcodec") and f.get("vcodec") != "none"
-        def has_audio(f): return f.get("acodec") and f.get("acodec") != "none"
+        # Formato ainda não confirmado — tenta os candidatos mais prováveis
+        # (campo direto, dentro de "video", ou lista "formats" estilo
+        # yt-dlp igual o Actor anterior usava).
+        video_url = _first_present(item, "videoUrl", "video_url", "downloadUrl", "hd_url", "sd_url", "url")
+        if not video_url:
+            nested = item.get("video") or {}
+            if isinstance(nested, dict):
+                video_url = _first_present(nested, "url", "downloadUrl", "hd_url", "sd_url")
+        if not video_url:
+            formats = item.get("formats") or []
 
-        # 1ª prioridade: formato COMBINADO (vídeo + áudio na mesma faixa) —
-        # o Facebook costuma servir vídeo e áudio separados (estilo DASH),
-        # então isso pode não existir. Se existir, é o ideal: 1 URL só, já
-        # com som.
-        combined = [f for f in formats if f.get("url") and has_video(f) and has_audio(f)]
-        if combined:
-            chosen = max(combined, key=lambda f: f.get("tbr") or 0)
-            return chosen.get("url")
+            def has_video(f): return f.get("vcodec") and f.get("vcodec") != "none"
+            def has_audio(f): return f.get("acodec") and f.get("acodec") != "none"
 
-        # 2ª prioridade: só achou faixas separadas — pega a de vídeo de
-        # maior qualidade mesmo sem áudio embutido. Isso é o que estava
-        # causando os vídeos mudos.
-        video_only = [f for f in formats if f.get("url") and has_video(f)]
-        chosen = max(video_only, key=lambda f: f.get("tbr") or 0) if video_only else None
-        if chosen:
-            logger.warning(f"[facebook-dark] só achei vídeo sem áudio combinado pra {share_url} — formatos disponíveis: {[(f.get('vcodec'), f.get('acodec'), f.get('ext')) for f in formats]}")
-        if not chosen and formats and formats[0].get("url"):
-            chosen = formats[0]
-        return (chosen or {}).get("url")
+            combined = [f for f in formats if f.get("url") and has_video(f) and has_audio(f)]
+            if combined:
+                video_url = max(combined, key=lambda f: f.get("tbr") or 0).get("url")
+            else:
+                video_only = [f for f in formats if f.get("url") and has_video(f)]
+                if video_only:
+                    video_url = max(video_only, key=lambda f: f.get("tbr") or 0).get("url")
+                    logger.warning(f"[facebook-dark] só achei vídeo sem áudio combinado pra {share_url}")
+
+        if not video_url:
+            logger.warning(f"[facebook-dark] não achei video_url em nenhum caminho conhecido. Chaves do item: {list(item.keys())}")
+        return video_url
     except Exception as e:
         logger.warning(f"[facebook-dark] erro ao resolver {share_url}: {e}")
         return None
