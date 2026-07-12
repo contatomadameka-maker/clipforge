@@ -11,11 +11,6 @@ import ssl
 
 settings = get_settings()
 
-# ── SSL para Upstash (rediss://) ──────────────────────────────
-ssl_context = ssl.create_default_context()
-ssl_context.check_hostname = False
-ssl_context.verify_mode = ssl.CERT_NONE
-
 celery_app = Celery("clipforge")
 
 celery_app.config_from_object({
@@ -26,8 +21,15 @@ celery_app.config_from_object({
     "result_serializer": "json",
     "timezone": "America/Sao_Paulo",
     "task_track_started": True,
-    "broker_use_ssl": {"ssl_context": ssl_context},
-    "redis_backend_use_ssl": {"ssl_context": ssl_context},
+    # Upstash exige rediss:// (SSL) — passa ssl_cert_reqs direto (não um
+    # objeto ssl_context inteiro), formato que essa versão do redis-py
+    # aceita de verdade. A versão anterior (ssl_context) quebrava com
+    # "AbstractConnection.__init__() got an unexpected keyword argument
+    # 'ssl_context'" assim que a primeira task de verdade tentava ser
+    # enviada — só não tinha sido descoberto porque o Studio (que usa
+    # esse Celery também) nunca tinha sido testado de ponta a ponta ainda.
+    "broker_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
+    "redis_backend_use_ssl": {"ssl_cert_reqs": ssl.CERT_NONE},
     "broker_connection_retry_on_startup": True,
 })
 
