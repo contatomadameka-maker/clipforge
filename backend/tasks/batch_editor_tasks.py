@@ -16,6 +16,7 @@
 import asyncio
 import json
 import logging
+import ssl
 
 import redis
 
@@ -26,10 +27,13 @@ from services.shared.batch_editor_core import BatchEditRequest, process_one_vide
 settings = get_settings()
 logger = logging.getLogger("batch_editor_tasks")
 
-# Mesma URL do Redis já usada pelo Celery (Upstash, rediss:// já vem com
-# ?ssl_cert_reqs=CERT_NONE na própria connection string) — cliente
-# separado do broker do Celery, só pra guardar o progresso do job.
-_redis_client = redis.from_url(settings.redis_url, decode_responses=True)
+# Mesma URL do Redis já usada pelo Celery (Upstash). O texto
+# "?ssl_cert_reqs=CERT_NONE" que já vem escrito na própria URL funciona
+# pro transporte do Celery (kombu), mas o redis-py "cru" (usado aqui só
+# pra guardar o progresso do job) não entende esse texto direto da URL —
+# precisa do valor em Python de verdade (ssl.CERT_NONE), passado como
+# parâmetro explícito, por isso repete aqui mesmo já estando na URL.
+_redis_client = redis.from_url(settings.redis_url, decode_responses=True, ssl_cert_reqs=ssl.CERT_NONE)
 
 _JOB_TTL_SECONDS = 24 * 60 * 60  # 24h — depois disso o Redis limpa sozinho
 
