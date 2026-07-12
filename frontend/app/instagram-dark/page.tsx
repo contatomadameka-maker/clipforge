@@ -197,8 +197,14 @@ export default function InstagramDarkPage() {
     if (!facebookPageInput.trim() || facebookLoadingMore) return;
     setFacebookLoadingMore(true);
     setFacebookError(null);
+    // A descoberta reconta a página inteira do zero a cada página nova
+    // (não tem cursor de verdade) — quanto mais fundo (offset maior),
+    // mais lento fica. Timeout de segurança pra não ficar girando pra
+    // sempre se a Apify demorar demais ou travar.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
     try {
-      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=${facebookVideos.length}`);
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=${facebookVideos.length}`, { signal: controller.signal });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao carregar mais vídeos");
@@ -211,8 +217,9 @@ export default function InstagramDarkPage() {
       setFacebookVideos(prev => [...prev, ...items]);
       setFacebookHasMore(!!data.has_more);
     } catch (e: any) {
-      setFacebookError(e.message);
+      setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 90s) — a página deve ter muitos vídeos pra recontar do zero. Tenta de novo, ou usa os que já carregou." : e.message);
     } finally {
+      clearTimeout(timeoutId);
       setFacebookLoadingMore(false);
     }
   }
