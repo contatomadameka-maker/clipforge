@@ -3,16 +3,22 @@
 # Upload de arquivos para Cloudflare R2
 # ─────────────────────────────────────────────────────────────
 from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
+from typing import List, Optional
 from config import get_settings
 import boto3
 from botocore.config import Config
 import uuid
 import os
+import tempfile
+import zipfile
 import httpx
+import logging
 router = APIRouter()
 settings = get_settings()
+logger = logging.getLogger("storage")
 def get_r2_client():
     return boto3.client(
         "s3",
@@ -146,4 +152,66 @@ async def download_proxy(url: str, filename: str = "video.mp4"):
         stream(),
         media_type="video/mp4",
         headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+    )
+
+
+class ZipDownloadRequest(BaseModel):
+    urls: List[str]
+    filenames: Optional[List[str]] = None  # index-alinhado com `urls` — nome de cada arquivo dentro do zip
+    zip_filename: str = "videos.zip"
+
+
+@router.post("/download-zip")
+async def download_zip(req: ZipDownloadRequest):
+    """Baixa vários vídeos e devolve como UM ZIP só — resolve o problema
+    de 'baixar todos' disparando N downloads separados, que o navegador
+    trata como suspeito (pede permissão e, mesmo permitindo, costuma
+    falhar ou travar em parte deles). Um ZIP é só 1 download, sem esse
+    tipo de bloqueio."""
+    if not req.urls:
+        raise HTTPException(status_code=400, detail="Nenhum vídeo pra zipar.")
+    if len(req.urls) > 100:
+        raise HTTPException(status_code=400, detail="Máximo de 100 vídeos por ZIP.")
+
+    safe_zip_name = (req.zip_filename or "videos.zip").replace('"', "").replace("\n", "").replace("\r", "")
+    if not safe_zip_name.lower().endswith(".zip"):
+        safe_zip_name += ".zip"
+
+    fd, zip_path = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+
+    try:
+        # ZIP_STORED (sem compressão) de propósito — vídeo já vem
+        # comprimido (mp4/h264), tentar comprimir de novo só gasta CPU
+        # sem economizar espaço nenhum.
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
+            async with httpx.AsyncClient(timeout=60) as client:
+                for i, url in enumerate(req.urls):
+                    name = None
+                    if req.filenames and i < len(req.filenames) and req.filenames[i]:
+                        name = req.filenames[i]
+                    if not name:
+                        name = f"video-{i + 1}.mp4"
+                    try:
+                        res = await client.get(url)
+                        if res.status_code == 200:
+                            zf.writestr(name, res.content)
+                        else:
+                            logger.warning(f"[storage] falha ao baixar {url} pro zip (HTTP {res.status_code}) — pulando")
+                    except Exception as e:
+                        logger.warning(f"[storage] erro ao baixar {url} pro zip: {e} — pulando")
+    except Exception:
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+        raise
+
+    # Remove o arquivo temporário só DEPOIS de terminar de mandar a
+    # resposta pro navegador (BackgroundTask do Starlette roda depois do
+    # response ser enviado) — apagar antes disso faria o download falhar
+    # no meio.
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=safe_zip_name,
+        background=BackgroundTask(lambda: os.path.exists(zip_path) and os.remove(zip_path)),
     )
