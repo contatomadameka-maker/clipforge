@@ -196,8 +196,14 @@ export default function InstagramDarkPage() {
     setFacebookSelected(new Set());
     setFacebookHasMore(false);
     setFacebookCursor(null);
+    // O backend pode fazer várias chamadas internas (até 8) até juntar o
+    // total pedido — timeout generoso pra não desistir antes dele
+    // terminar (senão o site mostra erro mas o backend continua rodando
+    // e gastando crédito nos bastidores, sem ninguém ver o resultado).
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
-      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}`);
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}`, { signal: controller.signal });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao buscar vídeos dessa página do Facebook");
@@ -211,8 +217,9 @@ export default function InstagramDarkPage() {
       setFacebookHasMore(!!data.has_more);
       setFacebookCursor(data.next_cursor || null);
     } catch (e: any) {
-      setFacebookError(e.message);
+      setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 2 min). Tenta de novo — se continuar acontecendo, tenta com um link diferente ou me avisa." : e.message);
     } finally {
+      clearTimeout(timeoutId);
       setFacebookLoading(false);
     }
   }
@@ -221,11 +228,10 @@ export default function InstagramDarkPage() {
     if (!facebookPageInput.trim() || facebookLoadingMore || !facebookCursor) return;
     setFacebookLoadingMore(true);
     setFacebookError(null);
-    // Cursor de verdade agora (SociaVault) — bem mais rápido que o
-    // esquema antigo (que precisava reescanear a página inteira do zero
-    // a cada página nova), mas mantém um timeout de segurança mesmo assim.
+    // Mesmo motivo do timeout generoso da busca inicial — o backend pode
+    // fazer até 8 chamadas internas antes de responder.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
     try {
       const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&cursor=${encodeURIComponent(facebookCursor)}`, { signal: controller.signal });
       if (!res.ok) {
@@ -241,7 +247,7 @@ export default function InstagramDarkPage() {
       setFacebookHasMore(!!data.has_more);
       setFacebookCursor(data.next_cursor || null);
     } catch (e: any) {
-      setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 90s) — a página deve ter muitos vídeos pra recontar do zero. Tenta de novo, ou usa os que já carregou." : e.message);
+      setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 2 min). Tenta de novo, ou usa os que já carregou." : e.message);
     } finally {
       clearTimeout(timeoutId);
       setFacebookLoadingMore(false);
