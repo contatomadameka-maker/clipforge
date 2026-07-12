@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import ssl
+from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import redis
 
@@ -27,13 +28,23 @@ from services.shared.batch_editor_core import BatchEditRequest, process_one_vide
 settings = get_settings()
 logger = logging.getLogger("batch_editor_tasks")
 
-# Mesma URL do Redis já usada pelo Celery (Upstash). O texto
-# "?ssl_cert_reqs=CERT_NONE" que já vem escrito na própria URL funciona
-# pro transporte do Celery (kombu), mas o redis-py "cru" (usado aqui só
-# pra guardar o progresso do job) não entende esse texto direto da URL —
-# precisa do valor em Python de verdade (ssl.CERT_NONE), passado como
-# parâmetro explícito, por isso repete aqui mesmo já estando na URL.
-_redis_client = redis.from_url(settings.redis_url, decode_responses=True, ssl_cert_reqs=ssl.CERT_NONE)
+
+def _redis_url_without_ssl_cert_reqs(url: str) -> str:
+    """Tira o '?ssl_cert_reqs=CERT_NONE' de dentro da URL — o redis-py
+    "cru" (diferente do transporte do Celery) tenta interpretar esse
+    texto sozinho e quebra com 'Invalid SSL Certificate Requirements
+    Flag', mesmo passando o valor certo por fora depois. Solução: tira
+    da URL e manda só como parâmetro Python de verdade (ssl.CERT_NONE)."""
+    parts = urlsplit(url)
+    query_pairs = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() != "ssl_cert_reqs"]
+    new_query = urlencode(query_pairs)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, new_query, parts.fragment))
+
+
+# Mesma URL do Redis já usada pelo Celery (Upstash) — mas limpa do
+# "ssl_cert_reqs" de dentro da URL (ver função acima) e com o valor
+# certo aplicado por fora, em Python.
+_redis_client = redis.from_url(_redis_url_without_ssl_cert_reqs(settings.redis_url), decode_responses=True, ssl_cert_reqs=ssl.CERT_NONE)
 
 _JOB_TTL_SECONDS = 24 * 60 * 60  # 24h — depois disso o Redis limpa sozinho
 
