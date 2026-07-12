@@ -73,6 +73,7 @@ async def _discover_reels(client: httpx.AsyncClient, page_url: str, limit: int) 
         "startUrls": [{"url": page_url.strip()}],
         "resultsLimit": max(1, min(limit, 100)),
     }
+    logger.info(f"[facebook-dark] discovery payload enviado: {payload}")
     res = await client.post(
         f"{APIFY_BASE}/acts/{DISCOVERY_ACTOR}/run-sync-get-dataset-items",
         params={"token": settings.apify_api_token},
