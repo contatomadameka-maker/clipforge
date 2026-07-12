@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     hikerapi_key: str = ""
     tikhub_api_key: str = ""
     apify_api_token: str = ""
+    sociavault_api_key: str = ""
     class Config:
         env_file = ".env"
         extra = "allow"
