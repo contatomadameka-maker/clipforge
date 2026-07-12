@@ -100,7 +100,7 @@ async def list_videos(page_url: str, limit: int = 20, cursor: Optional[str] = No
     botão "Carregar mais" do frontend."""
     all_items: list[VideoItem] = []
     current_cursor = cursor
-    max_calls = 15  # limite de segurança — evita loop indo até o fim da página numa busca só
+    max_calls = 8  # limite de segurança — cada chamada da SociaVault costuma trazer ~3 itens, então 8 dá pra ~24 vídeos por busca; menor que antes pra evitar que uma busca lenta estoure o tempo de espera do frontend
 
     async with httpx.AsyncClient(timeout=60) as client:
         for _ in range(max_calls):
