@@ -57,16 +57,37 @@ function downloadVideoBlob(url: string, filename: string) {
   a.remove();
 }
 
-// Baixa vários vídeos em sequência, com um pequeno intervalo entre eles —
-// baixar tudo ao mesmo tempo pode fazer o navegador pedir confirmação
-// ("Este site quer baixar vários arquivos") ou bloquear como proteção
-// anti-spam do próprio Chrome/Firefox.
-async function downloadAllBlobs(items: { url: string; filename: string }[], onProgress?: (done: number, total: number) => void) {
-  for (let i = 0; i < items.length; i++) {
-    downloadVideoBlob(items[i].url, items[i].filename);
-    onProgress?.(i + 1, items.length);
-    await new Promise(r => setTimeout(r, 600));
+// Baixa todos como UM ZIP SÓ, montado no backend — resolve o problema de
+// "baixar todos" disparando N downloads separados (o navegador trata isso
+// como suspeito: pede permissão e, mesmo aceitando, costuma travar ou
+// falhar em parte deles). Como é 1 download só, não esbarra nesse
+// bloqueio. onProgress aqui não é "vídeo a vídeo" (o zip é montado inteiro
+// no backend antes de vir) — só sinaliza início/fim pra UI.
+async function downloadAllAsZip(items: { url: string; filename: string }[], zipFilename: string, onProgress?: (done: number, total: number) => void) {
+  onProgress?.(0, items.length);
+  const res = await fetch(`${API}/storage/download-zip`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      urls: items.map(i => i.url),
+      filenames: items.map(i => i.filename),
+      zip_filename: zipFilename,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Erro ao gerar o ZIP");
   }
+  const blob = await res.blob();
+  const blobUrl = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = blobUrl;
+  a.download = zipFilename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(blobUrl);
+  onProgress?.(items.length, items.length);
 }
 
 interface ReelItem {
@@ -1972,12 +1993,16 @@ export default function InstagramDarkPage() {
                           .map((r, i) => ({ url: r.final_url as string, filename: `video-lote-${i + 1}.mp4` }));
                         setDownloadingAll(true);
                         setDownloadAllProgress({ done: 0, total: items.length });
-                        await downloadAllBlobs(items, (done, total) => setDownloadAllProgress({ done, total }));
+                        try {
+                          await downloadAllAsZip(items, `clipforge-lote-${Date.now()}.zip`, (done, total) => setDownloadAllProgress({ done, total }));
+                        } catch (e: any) {
+                          setBatchError(e.message || "Erro ao baixar o ZIP com todos os vídeos.");
+                        }
                         setDownloadingAll(false);
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
                       style={{ background: "rgba(62,207,142,0.15)", color: "#3ecf8e", border: "0.5px solid rgba(62,207,142,0.3)" }}>
-                      {downloadingAll ? `⏳ Baixando ${downloadAllProgress.done}/${downloadAllProgress.total}...` : "⬇️ Baixar todos"}
+                      {downloadingAll ? "⏳ Gerando ZIP..." : "⬇️ Baixar todos (.zip)"}
                     </button>
                   )}
                 </div>
