@@ -185,6 +185,7 @@ export default function InstagramDarkPage() {
   const [facebookSelected, setFacebookSelected] = useState<Set<string>>(new Set());
   const [facebookError, setFacebookError] = useState<string | null>(null);
   const [facebookHasMore, setFacebookHasMore] = useState(false);
+  const [facebookCursor, setFacebookCursor] = useState<string | null>(null);
   const FACEBOOK_PAGE_SIZE = 20;
 
   async function searchFacebookVideos() {
@@ -194,8 +195,9 @@ export default function InstagramDarkPage() {
     setFacebookVideos([]);
     setFacebookSelected(new Set());
     setFacebookHasMore(false);
+    setFacebookCursor(null);
     try {
-      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=0`);
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao buscar vídeos dessa página do Facebook");
@@ -207,6 +209,7 @@ export default function InstagramDarkPage() {
       }));
       setFacebookVideos(items);
       setFacebookHasMore(!!data.has_more);
+      setFacebookCursor(data.next_cursor || null);
     } catch (e: any) {
       setFacebookError(e.message);
     } finally {
@@ -215,17 +218,16 @@ export default function InstagramDarkPage() {
   }
 
   async function loadMoreFacebookVideos() {
-    if (!facebookPageInput.trim() || facebookLoadingMore) return;
+    if (!facebookPageInput.trim() || facebookLoadingMore || !facebookCursor) return;
     setFacebookLoadingMore(true);
     setFacebookError(null);
-    // A descoberta reconta a página inteira do zero a cada página nova
-    // (não tem cursor de verdade) — quanto mais fundo (offset maior),
-    // mais lento fica. Timeout de segurança pra não ficar girando pra
-    // sempre se a Apify demorar demais ou travar.
+    // Cursor de verdade agora (SociaVault) — bem mais rápido que o
+    // esquema antigo (que precisava reescanear a página inteira do zero
+    // a cada página nova), mas mantém um timeout de segurança mesmo assim.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000);
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
-      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&offset=${facebookVideos.length}`, { signal: controller.signal });
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}&cursor=${encodeURIComponent(facebookCursor)}`, { signal: controller.signal });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || "Erro ao carregar mais vídeos");
@@ -237,6 +239,7 @@ export default function InstagramDarkPage() {
       }));
       setFacebookVideos(prev => [...prev, ...items]);
       setFacebookHasMore(!!data.has_more);
+      setFacebookCursor(data.next_cursor || null);
     } catch (e: any) {
       setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 90s) — a página deve ter muitos vídeos pra recontar do zero. Tenta de novo, ou usa os que já carregou." : e.message);
     } finally {
@@ -1018,7 +1021,7 @@ export default function InstagramDarkPage() {
                   {facebookLoading ? "Buscando..." : "Buscar"}
                 </button>
               </div>
-              <p className="text-[10px] text-[#f59e0b] mt-2">⚠️ Cada busca consome créditos reais da API (Apify) — evite repetir sem necessidade.</p>
+              <p className="text-[10px] text-[#55556a] mt-2">Cada busca consome 1 crédito da API (SociaVault) — bem barato, mas evite repetir sem necessidade.</p>
             </div>
 
             {facebookError && <p className="text-xs text-[#f87171] -mt-3">{facebookError}</p>}
