@@ -168,3 +168,13 @@ def generate_studio_video(
     except Exception as e:
         mark_error(project_id, self.request.retries + 1, str(e), user_id, credits_used)
         raise
+
+
+# Importa as tasks do Editor em Massa aqui embaixo (não no topo) pra
+# evitar import circular — batch_editor_tasks.py importa `celery_app`
+# DESTE arquivo, então só pode ser importado depois que `celery_app` já
+# existe. Isso garante que, sempre que o worker subir apontando pra
+# este módulo (studio_tasks), as tasks do batch_editor também fiquem
+# registradas nele — sem isso, o worker recusaria rodar
+# "batch_editor.process_video" por não conhecer essa task.
+from tasks import batch_editor_tasks  # noqa: E402,F401
