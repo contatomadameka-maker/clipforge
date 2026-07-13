@@ -2,9 +2,9 @@
 # backend/routers/facebook_dark.py
 # Facebook Dark — lista vídeos de uma Página pública do Facebook.
 #
-# Usa a SociaVault (api.sociavault.com), NÃO Apify — troca feita porque
-# a Apify passou a exigir assinatura de plataforma (~$26-29/mês) pra
-# qualquer Actor pago, mesmo os anunciados como "pay per result".
+# Usa a SociaVault (api.sociavault.com) — troca feita porque a Apify
+# passou a exigir assinatura de plataforma (~$26-29/mês) pra qualquer
+# Actor pago, mesmo os anunciados como "pay per result".
 #
 # A SociaVault resolve numa ÚNICA chamada o que antes precisava de DOIS
 # passos (Apify pra descobrir + yt-dlp local pra resolver o vídeo
@@ -12,6 +12,10 @@
 # link de vídeo pronto (videoDetails.hdUrl/sdUrl) junto com a lista de
 # posts da página. Modelo de cobrança: pay-as-you-go puro, créditos não
 # expiram, sem assinatura obrigatória.
+#
+# Limitação conhecida: a SociaVault devolve só um lote pequeno por
+# chamada (~3 posts) — por isso repetimos a chamada sozinhos (seguindo o
+# cursor dela) até juntar o `limit` pedido.
 #
 # NÃO tem processamento próprio de propósito — os vídeos encontrados
 # aqui alimentam o Editor em Massa (batch_editor.py), que já é
@@ -47,6 +51,14 @@ class ListVideosResponse(BaseModel):
     videos: List[VideoItem]
     has_more: bool = False
     next_cursor: Optional[str] = None
+
+
+def _first_present(d: dict, *keys: str):
+    for k in keys:
+        v = d.get(k)
+        if v:
+            return v
+    return None
 
 
 def _auth_headers() -> dict:
