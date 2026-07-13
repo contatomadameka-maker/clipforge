@@ -140,7 +140,7 @@ export default function InstagramDarkPage() {
   // ── Editor em Massa — estado próprio, separado do fluxo de faixa/marca acima ──
   const [batchSource, setBatchSource] = useState<"existing" | "tiktok" | "facebook" | "upload">("existing");
 
-  function goToEditorWith(source: "tiktok" | "facebook") {
+  function goToEditorWith(source: "existing" | "tiktok" | "facebook") {
     setBatchSource(source);
     setTab("lote");
   }
@@ -1202,103 +1202,14 @@ export default function InstagramDarkPage() {
                 {loadingMore ? "Carregando..." : "Carregar mais Reels"}
               </button>
             )}
-          </div>
-        )}
-
-        {/* Faixa (molde) + marca d'água + custo ao vivo (aba Buscar/Link) */}
-        {(tab === "perfil" || tab === "link") && reels.length > 0 && (
-          <div className="rounded-2xl p-5 flex flex-col gap-4" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Faixa no topo (opcional — nome do canal ou tema)</label>
-              <input type="text" value={barText} onChange={e => setBarText(e.target.value)}
-                placeholder="Ex: Reflexões Diárias"
-                className="w-full h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a] mb-3"
-                style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
-              <div className="flex gap-4 mb-4">
-                <div className="flex-1">
-                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor da faixa</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={barColor} onChange={e => setBarColor(e.target.value)}
-                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                    <span className="text-xs text-[#9090a8]">{barColor}</span>
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <label className="text-[11px] text-[#55556a] block mb-1.5">Cor do texto</label>
-                  <div className="flex items-center gap-2">
-                    <input type="color" value={textColor} onChange={e => setTextColor(e.target.value)}
-                      className="w-10 h-10 rounded-[8px] cursor-pointer border-none bg-transparent" />
-                    <span className="text-xs text-[#9090a8]">{textColor}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Prévia maior, em formato de celular */}
-              <div className="flex justify-center">
-                <div className="rounded-[24px] p-2" style={{ background: "#000", border: "3px solid #2a2a35", width: "160px" }}>
-                  <div className="rounded-[16px] overflow-hidden" style={{ aspectRatio: "9/16" }}>
-                    <div className="flex items-center justify-center text-[13px] font-bold text-center px-2" style={{ height: "18%", background: barColor, color: textColor }}>
-                      {barText || "sua faixa aqui"}
-                    </div>
-                    <div className="flex items-center justify-center text-[10px] text-[#55556a]" style={{ height: "82%", background: "#18181f" }}>
-                      vídeo original
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <p className="text-[10px] text-[#55556a] mt-3 text-center">A faixa é adicionada acima do vídeo — o vídeo original não é cortado.</p>
-            </div>
-
-            <div>
-              <label className="text-xs font-medium text-[#9090a8] block mb-2">Marca d'água (opcional — canto inferior direito, o vídeo todo)</label>
-              <div onClick={() => watermarkFileRef.current?.click()}
-                className="flex items-center gap-3 px-4 py-3 rounded-[8px] cursor-pointer"
-                style={{ background: "rgba(62,207,142,0.05)", border: "0.5px dashed rgba(62,207,142,0.3)" }}>
-                {watermarkUrl ? <img src={watermarkUrl} className="w-10 h-10 rounded object-cover" alt="" /> : <span>💧</span>}
-                <span className="text-xs text-[#9090a8]">{watermarkUrl ? "Marca d'água enviada — clique pra trocar" : "Enviar marca d'água (PNG transparente)"}</span>
-              </div>
-              <input ref={watermarkFileRef} type="file" accept="image/png" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) uploadFile(f, setWatermarkUrl); }} />
-            </div>
-
-            {/* Custo ao vivo */}
-            <div className="rounded-[10px] px-4 py-3 flex items-center justify-between" style={{ background: "rgba(96,165,250,0.08)", border: "0.5px solid rgba(96,165,250,0.2)" }}>
-              <span className="text-xs text-[#9090a8]">{selected.size} selecionado{selected.size !== 1 ? "s" : ""} × {CREDITS_PER_REEL}cr</span>
-              <span className="text-sm font-bold text-[#60a5fa]">{estimatedCost} créditos</span>
-            </div>
-
-            <button type="button" onClick={openConfirm} disabled={processing}
-              className="w-full h-12 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+            <button type="button" onClick={() => { setBatchSelectedReels(new Set(selected)); goToEditorWith("existing"); }} disabled={selected.size === 0}
+              className="w-full mt-3 h-11 rounded-[10px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
               style={{ background: "linear-gradient(135deg,#8b7cf8,#7c6df5)", color: "#fff" }}>
-              {processing ? `Processando... ${progress}%` : `Processar ${selected.size} Reel${selected.size !== 1 ? "s" : ""}`}
+              🎛️ Editar {selected.size} vídeo{selected.size !== 1 ? "s" : ""} no Editor em Massa
             </button>
-            <p className="text-[10px] text-[#55556a] text-center -mt-2">Você só paga pelos Reels que realmente forem baixados com sucesso.</p>
           </div>
         )}
 
-        {/* Resultados (aba Buscar/Link) */}
-        {tab !== "lote" && results.length > 0 && (
-          <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
-            <p className="text-sm font-semibold mb-3">Resultado</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              {results.map((r, i) => (
-                <div key={i} className="rounded-xl overflow-hidden" style={{ border: "0.5px solid rgba(255,255,255,0.1)" }}>
-                  {r.status === "done" && r.final_url ? (
-                    <>
-                      <video src={r.final_url} className="w-full" style={{ aspectRatio: "9/16" }} controls />
-                      <button type="button" onClick={() => downloadVideoBlob(r.final_url as string, `reel-${Date.now()}.mp4`)}
-                        className="block w-full text-center py-2 text-xs no-underline cursor-pointer border-none" style={{ background: "transparent", color: "#3ecf8e" }}>⬇️ Baixar</button>
-                    </>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center p-3 gap-1.5" style={{ aspectRatio: "9/16" }}>
-                      <span className="text-xs text-[#f87171] font-medium">❌ Falhou</span>
-                      {r.error && <p className="text-[10px] text-[#9090a8] text-center leading-relaxed line-clamp-6">{r.error}</p>}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
 
         {/* ═══════════════════════════════════════════════════════════
             ABA: EDITOR EM MASSA — layout 3 colunas (lista | prévia | config)
