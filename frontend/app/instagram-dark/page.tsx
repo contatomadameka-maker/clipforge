@@ -178,6 +178,7 @@ export default function InstagramDarkPage() {
   }
 
   // ── Facebook — busca por página, dentro do Editor em Massa ──
+  const FACEBOOK_SESSION_KEY = "clipforge_facebook_search_state";
   const [facebookPageInput, setFacebookPageInput] = useState("");
   const [facebookLoading, setFacebookLoading] = useState(false);
   const [facebookLoadingMore, setFacebookLoadingMore] = useState(false);
@@ -186,7 +187,41 @@ export default function InstagramDarkPage() {
   const [facebookError, setFacebookError] = useState<string | null>(null);
   const [facebookHasMore, setFacebookHasMore] = useState(false);
   const [facebookCursor, setFacebookCursor] = useState<string | null>(null);
+  const [facebookRestored, setFacebookRestored] = useState(false);
   const FACEBOOK_PAGE_SIZE = 20;
+
+  // Restaura a busca salva (se tiver) assim que a página carrega — cobre
+  // o caso de dar um F5 sem querer no meio de uma busca grande: sem isso,
+  // o navegador esquece tudo e a próxima busca recomeça do zero,
+  // gastando crédito de novo nos vídeos que já tinham sido buscados.
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(FACEBOOK_SESSION_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setFacebookPageInput(parsed.pageInput || "");
+        setFacebookVideos(parsed.videos || []);
+        setFacebookHasMore(!!parsed.hasMore);
+        setFacebookCursor(parsed.cursor || null);
+      }
+    } catch {}
+    setFacebookRestored(true);
+  }, []);
+
+  // Salva sempre que algo relevante muda — só depois de já ter restaurado
+  // (senão o efeito de restaurar acima ia disparar isso e sobrescrever
+  // com estado vazio antes de ler o que tinha salvo).
+  useEffect(() => {
+    if (!facebookRestored) return;
+    try {
+      sessionStorage.setItem(FACEBOOK_SESSION_KEY, JSON.stringify({
+        pageInput: facebookPageInput,
+        videos: facebookVideos,
+        hasMore: facebookHasMore,
+        cursor: facebookCursor,
+      }));
+    } catch {}
+  }, [facebookRestored, facebookPageInput, facebookVideos, facebookHasMore, facebookCursor]);
 
   async function searchFacebookVideos() {
     if (!facebookPageInput.trim()) return;
@@ -248,6 +283,48 @@ export default function InstagramDarkPage() {
       setFacebookCursor(data.next_cursor || null);
     } catch (e: any) {
       setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 2 min). Tenta de novo, ou usa os que já carregou." : e.message);
+    } finally {
+      clearTimeout(timeoutId);
+      setFacebookLoadingMore(false);
+    }
+  }
+
+  // Quando a SociaVault diz "acabou" (cursor null), nem sempre é
+  // verdade — já vimos ela relatar fim bem cedo e, recomeçando a busca
+  // do zero, aparecerem vídeos novos que ela tinha "esquecido". Essa
+  // função recomeça do início mas só ACRESCENTA o que ainda não estava
+  // na lista (compara por media_id) — não duplica, não perde o que já
+  // tinha sido selecionado.
+  async function retryFacebookSearchFromScratch() {
+    if (!facebookPageInput.trim() || facebookLoadingMore) return;
+    setFacebookLoadingMore(true);
+    setFacebookError(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    try {
+      const res = await fetch(`${API}/facebook-dark/list-videos?page_url=${encodeURIComponent(facebookPageInput.trim())}&limit=${FACEBOOK_PAGE_SIZE}`, { signal: controller.signal });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao buscar de novo");
+      }
+      const data = await res.json();
+      const items: ReelItem[] = (data.videos || []).map((v: any) => ({
+        media_id: v.media_id, video_url: v.video_url, thumbnail_url: v.thumbnail_url,
+        views: v.views, duration_seconds: v.duration_seconds,
+      }));
+      setFacebookVideos(prev => {
+        const existingIds = new Set(prev.map(v => v.media_id));
+        const novos = items.filter(v => !existingIds.has(v.media_id));
+        if (novos.length === 0) {
+          setFacebookError("Buscou de novo e não achou nenhum vídeo novo — essa página realmente deve ter acabado mesmo.");
+        }
+        return [...prev, ...novos];
+      });
+      // Continua a paginação a partir dessa nova busca, caso ainda tenha mais.
+      setFacebookHasMore(!!data.has_more);
+      setFacebookCursor(data.next_cursor || null);
+    } catch (e: any) {
+      setFacebookError(e.name === "AbortError" ? "Demorou demais pra responder (mais de 2 min). Tenta de novo." : e.message);
     } finally {
       clearTimeout(timeoutId);
       setFacebookLoadingMore(false);
@@ -1027,7 +1104,7 @@ export default function InstagramDarkPage() {
                   {facebookLoading ? "Buscando..." : "Buscar"}
                 </button>
               </div>
-              <p className="text-[10px] text-[#55556a] mt-2">Cada busca consome 1 crédito da API (SociaVault) — bem barato, mas evite repetir sem necessidade.</p>
+              <p className="text-[10px] text-[#55556a] mt-2">Cada busca consome créditos da API (SociaVault) — o progresso fica salvo mesmo se você atualizar a página, então não se preocupa em perder o que já buscou.</p>
             </div>
 
             {facebookError && <p className="text-xs text-[#f87171] -mt-3">{facebookError}</p>}
@@ -1064,6 +1141,13 @@ export default function InstagramDarkPage() {
                     className="w-full mt-3 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
                     style={{ background: "rgba(255,255,255,0.05)", color: "#9090a8", border: "0.5px solid rgba(255,255,255,0.1)" }}>
                     {facebookLoadingMore ? "Carregando mais..." : "Carregar mais vídeos"}
+                  </button>
+                )}
+                {!facebookHasMore && facebookVideos.length > 0 && (
+                  <button type="button" onClick={retryFacebookSearchFromScratch} disabled={facebookLoadingMore}
+                    className="w-full mt-3 h-10 rounded-[8px] text-xs font-medium cursor-pointer border-none disabled:opacity-50"
+                    style={{ background: "rgba(124,109,245,0.1)", color: "#a99cf8", border: "0.5px dashed rgba(124,109,245,0.3)" }}>
+                    {facebookLoadingMore ? "Buscando de novo..." : "🔄 A página disse que acabou — tentar buscar mais uma vez"}
                   </button>
                 )}
                 <button type="button" onClick={() => goToEditorWith("facebook")} disabled={facebookSelected.size === 0}
