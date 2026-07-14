@@ -152,3 +152,52 @@ async def list_videos(page_url: str, limit: int = 20, cursor: Optional[str] = No
             has_more=bool(current_cursor),
             next_cursor=current_cursor,
         )
+
+
+@router.get("/video-by-url", response_model=VideoItem)
+async def video_by_url(url: str):
+    """Busca 1 Reels/vídeo específico direto pelo link — útil pra ir
+    acumulando vídeos manualmente quando a busca por página (list-videos)
+    não traz tudo de uma vez. Usa /v1/scrape/facebook/post da SociaVault,
+    que é o endpoint de post individual (confirmado na doc pública deles
+    que funciona com link de Reels também, não só post normal)."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        res = await client.get(
+            f"{SOCIAVAULT_BASE}/v1/scrape/facebook/post",
+            params={"url": url.strip()},
+            headers=_auth_headers(),
+        )
+        logger.info(f"[facebook-dark] video-by-url http={res.status_code} body={res.text[:3000]}")
+
+        if res.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"Erro ao buscar esse vídeo: {res.text[:500]}")
+
+        body = res.json()
+        if not body.get("success"):
+            raise HTTPException(status_code=502, detail=f"SociaVault devolveu erro: {body}")
+
+        data = body.get("data", {}) if isinstance(body.get("data"), dict) else {}
+        # Formato ainda não 100% confirmado pra esse endpoint específico
+        # (só testamos /profile/posts até agora) — tenta os caminhos mais
+        # prováveis: o post pode vir direto em "data", ou aninhado em
+        # "data.post".
+        post = data.get("post") if isinstance(data.get("post"), dict) else data
+
+        video_details = post.get("videoDetails") or {}
+        video_url = video_details.get("hdUrl") or video_details.get("sdUrl")
+        if not video_url:
+            logger.error(f"[facebook-dark] video-by-url sem vídeo reconhecido. Chaves: {list(post.keys())}")
+            raise HTTPException(status_code=422, detail=f"Esse link não parece ter vídeo, ou veio num formato diferente do esperado. Chaves recebidas: {list(post.keys())}")
+
+        thumb_url = video_details.get("thumbnailUrl") or post.get("image") or ""
+        views = post.get("videoViewCount") or post.get("reactionCount") or 0
+        title = post.get("text") or ""
+
+        return VideoItem(
+            media_id=str(post.get("id", "")),
+            video_url=video_url,
+            thumbnail_url=thumb_url,
+            views=int(views) if views else 0,
+            duration_seconds=0,
+            title=title[:200],
+        )
