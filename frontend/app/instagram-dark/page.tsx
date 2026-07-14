@@ -330,6 +330,42 @@ export default function InstagramDarkPage() {
       setFacebookLoadingMore(false);
     }
   }
+
+  // ── Facebook — adicionar 1 Reels específico por link, acumulando na
+  // lista (útil quando a busca por página não traz tudo de uma vez) ──
+  const [facebookLinkInput, setFacebookLinkInput] = useState("");
+  const [facebookLinkLoading, setFacebookLinkLoading] = useState(false);
+
+  async function addFacebookVideoByLink() {
+    if (!facebookLinkInput.trim()) return;
+    setFacebookLinkLoading(true);
+    setFacebookError(null);
+    try {
+      const res = await fetch(`${API}/facebook-dark/video-by-url?url=${encodeURIComponent(facebookLinkInput.trim())}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Erro ao buscar esse vídeo");
+      }
+      const v = await res.json();
+      const item: ReelItem = {
+        media_id: v.media_id, video_url: v.video_url, thumbnail_url: v.thumbnail_url,
+        views: v.views, duration_seconds: v.duration_seconds,
+      };
+      setFacebookVideos(prev => {
+        if (prev.some(p => p.media_id === item.media_id)) {
+          setFacebookError("Esse vídeo já estava na lista.");
+          return prev;
+        }
+        return [...prev, item];
+      });
+      setFacebookSelected(prev => new Set(prev).add(item.media_id));
+      setFacebookLinkInput("");
+    } catch (e: any) {
+      setFacebookError(e.message);
+    } finally {
+      setFacebookLinkLoading(false);
+    }
+  }
   const [batchSelectedReels, setBatchSelectedReels] = useState<Set<string>>(new Set());
   const [batchUploads, setBatchUploads] = useState<BatchUpload[]>([]);
   const batchFileRef = useRef<HTMLInputElement>(null);
@@ -1105,6 +1141,23 @@ export default function InstagramDarkPage() {
                 </button>
               </div>
               <p className="text-[10px] text-[#55556a] mt-2">Cada busca consome créditos da API (SociaVault) — o progresso fica salvo mesmo se você atualizar a página, então não se preocupa em perder o que já buscou.</p>
+            </div>
+
+            <div className="rounded-2xl p-5" style={{ background: "rgba(16,16,22,0.95)", border: "0.5px solid rgba(255,255,255,0.08)" }}>
+              <label className="text-xs font-medium text-[#9090a8] block mb-2">Ou adicione 1 Reels específico pelo link</label>
+              <div className="flex gap-2">
+                <input type="text" value={facebookLinkInput} onChange={e => setFacebookLinkInput(e.target.value)}
+                  placeholder="https://facebook.com/reel/..."
+                  onKeyDown={e => e.key === "Enter" && addFacebookVideoByLink()}
+                  className="flex-1 h-11 px-3 rounded-[8px] text-sm outline-none placeholder-[#3a3a4a]"
+                  style={{ color: "#f0f0f5", background: "rgba(255,255,255,0.05)", border: "0.5px solid rgba(255,255,255,0.1)" }} />
+                <button type="button" onClick={addFacebookVideoByLink} disabled={facebookLinkLoading}
+                  className="px-5 h-11 rounded-[8px] text-sm font-semibold cursor-pointer border-none disabled:opacity-50"
+                  style={{ background: "#7c6df5", color: "#fff" }}>
+                  {facebookLinkLoading ? "Buscando..." : "Adicionar"}
+                </button>
+              </div>
+              <p className="text-[10px] text-[#55556a] mt-2">Vai acumulando na lista abaixo, já selecionado — útil pra ir juntando vídeo por vídeo quando a busca por página não traz tudo de uma vez.</p>
             </div>
 
             {facebookError && <p className="text-xs text-[#f87171] -mt-3">{facebookError}</p>}
