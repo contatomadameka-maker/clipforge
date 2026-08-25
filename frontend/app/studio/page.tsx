@@ -403,28 +403,48 @@ export default function StudioPage() {
             </div>
           </div>
         ) : (
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
-              Link do vídeo de referência
-            </p>
-            <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${referenceUrl ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
-              <div className="flex items-center gap-2 p-3.5">
-                <svg className="w-4 h-4 text-text-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
-                </svg>
-                <input
-                  type="text"
-                  className="flex-1 bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3"
-                  placeholder="https://youtube.com/watch?v=..."
-                  value={referenceUrl}
-                  onChange={(e) => setReferenceUrl(e.target.value)}
-                  disabled={isRunning}
-                />
+          <div className="flex flex-col gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
+                Link do vídeo de referência
+              </p>
+              <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${referenceUrl ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
+                <div className="flex items-center gap-2 p-3.5">
+                  <svg className="w-4 h-4 text-text-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                  </svg>
+                  <input
+                    type="text"
+                    className="flex-1 bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3"
+                    placeholder="https://youtube.com/watch?v=..."
+                    value={referenceUrl}
+                    onChange={(e) => setReferenceUrl(e.target.value)}
+                    disabled={isRunning}
+                  />
+                </div>
+                <div className="px-3.5 pb-3 pt-0">
+                  <p className="text-[11px] text-text-3 leading-relaxed">
+                    🔒 Analisamos a <strong className="text-text-2">estrutura</strong> do vídeo (roteiro, ritmo, estilo visual) pra gerar algo novo na mesma linha — nunca baixamos nem reaproveitamos as imagens ou clipes originais. O vídeo final é 100% gerado por IA, com roteiro e cenas próprios.
+                  </p>
+                </div>
               </div>
-              <div className="px-3.5 pb-3 pt-0">
-                <p className="text-[11px] text-text-3 leading-relaxed">
-                  🔒 Analisamos a <strong className="text-text-2">estrutura</strong> do vídeo (roteiro, ritmo, estilo visual) pra gerar algo novo na mesma linha — nunca baixamos nem reaproveitamos as imagens ou clipes originais. O vídeo final é 100% gerado por IA, com roteiro e cenas próprios.
-                </p>
+            </div>
+
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
+                Sobre o que será o seu vídeo? <span className="normal-case font-normal text-text-3">(opcional)</span>
+              </p>
+              <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${topic ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
+                <div className="p-3.5">
+                  <input
+                    type="text"
+                    className="w-full bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3"
+                    placeholder="Deixe em branco pra usar o mesmo tema do vídeo de referência, com uma abordagem original"
+                    value={topic}
+                    onChange={(e) => setTopic(e.target.value)}
+                    disabled={isRunning}
+                  />
+                </div>
               </div>
             </div>
           </div>
