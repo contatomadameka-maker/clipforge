@@ -4,6 +4,15 @@
 // frontend/app/(dashboard)/studio/page.tsx
 // ClipForge Studio — geração de vídeos longos para YouTube
 // Pipeline de 9 agentes de IA em sequência
+//
+// NOVO: modo "Link de referência" — em vez de digitar um tema, o
+// usuário cola o link de um vídeo que já está performando bem. O
+// Agente 1 (Pesquisa) muda de comportamento nesse modo: em vez de
+// pesquisar o tema na web, ele ANALISA o vídeo de referência
+// (transcrição + estrutura narrativa + estilo visual) — nunca baixa
+// nem reaproveita nenhuma imagem/clipe do vídeo original. O resultado
+// dessa análise alimenta o Agente 2 (Roteiro), que escreve um roteiro
+// NOVO e ORIGINAL seguindo a mesma estrutura vencedora identificada.
 // ─────────────────────────────────────────────────────────────
 
 import { useState } from "react";
@@ -11,6 +20,7 @@ import { useState } from "react";
 // ── Tipos ─────────────────────────────────────────────────────
 
 type AgentStatus = "idle" | "active" | "done" | "error";
+type InputMode = "tema" | "referencia";
 
 interface Agent {
   id: number;
@@ -19,6 +29,10 @@ interface Agent {
   desc: string;
   descActive?: string;
   descDone?: string;
+  refName?: string;
+  refDesc?: string;
+  refDescActive?: string;
+  refDescDone?: string;
 }
 
 // ── Dados dos 9 agentes ───────────────────────────────────────
@@ -31,6 +45,10 @@ const agents: Agent[] = [
     desc: "Coleta fontes, contexto histórico, dados e referências sobre o tema",
     descActive: "Coletando fontes e referências...",
     descDone: "34 fontes coletadas — contexto histórico, Bíblia, arqueologia",
+    refName: "Análise de referência",
+    refDesc: "Baixa só o áudio do vídeo de referência, transcreve e analisa a estrutura narrativa e o estilo visual — nunca reaproveita nenhuma imagem ou clipe",
+    refDescActive: "Transcrevendo e analisando a estrutura do vídeo de referência...",
+    refDescDone: "Estrutura identificada — gancho, ritmo, estilo visual e narrativo mapeados",
   },
   {
     id: 2,
@@ -39,6 +57,9 @@ const agents: Agent[] = [
     desc: "Cria título, gancho, cenas, narração e estrutura narrativa completa",
     descActive: "Escrevendo roteiro com 8 cenas...",
     descDone: "8 cenas criadas — gancho, narrativa, clímax, conclusão",
+    refDesc: "Escreve um roteiro NOVO e ORIGINAL seguindo a mesma estrutura vencedora identificada na análise — conteúdo 100% próprio",
+    refDescActive: "Escrevendo roteiro original com a mesma estrutura vencedora...",
+    refDescDone: "8 cenas criadas — estrutura do vídeo de referência, conteúdo original",
   },
   {
     id: 3,
@@ -55,19 +76,20 @@ const agents: Agent[] = [
     desc: "Gera 1 prompt cinematográfico detalhado por cena para geração de vídeo",
     descActive: "Criando prompts visuais...",
     descDone: "8 prompts visuais criados e otimizados",
+    refDesc: "Gera prompts inspirados no ESTILO visual identificado (tipo de plano, iluminação, ritmo) — cenas 100% geradas por IA, nada copiado",
   },
   {
     id: 5,
     name: "Narração",
     api: "ElevenLabs",
     desc: "Converte a narração de cada cena em áudio com entonação e emoção",
-    descActive: "Gerando áudio por cena em PT-BR...",
+    descActive: "Gerando áudio por cena...",
     descDone: "8 faixas de áudio geradas — 7m 42s total",
   },
   {
     id: 6,
     name: "Vídeos por cena",
-    api: "Runway Gen-4",
+    api: "Kling AI",
     desc: "Gera clipes de vídeo em paralelo a partir dos prompts visuais",
     descActive: "Gerando 8 clipes em paralelo...",
     descDone: "8 clipes de vídeo prontos",
@@ -84,9 +106,9 @@ const agents: Agent[] = [
     id: 8,
     name: "Legendas",
     api: "Whisper",
-    desc: "Transcreve e sincroniza as legendas com o áudio da narração",
+    desc: "Transcreve e sincroniza as legendas com o áudio da narração, no idioma escolhido",
     descActive: "Sincronizando legendas...",
-    descDone: "Legendas sincronizadas — PT-BR",
+    descDone: "Legendas sincronizadas",
   },
   {
     id: 9,
@@ -102,47 +124,47 @@ const agents: Agent[] = [
 
 function AgentIcon({ id, status }: { id: number; status: AgentStatus }) {
   const icons: Record<number, React.ReactNode> = {
-    1: ( // pesquisa
+    1: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
       </svg>
     ),
-    2: ( // roteiro
+    2: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
       </svg>
     ),
-    3: ( // storyboard
+    3: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18M9 21V9" />
       </svg>
     ),
-    4: ( // prompts
+    4: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
       </svg>
     ),
-    5: ( // narração
+    5: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z" /><path d="M19 10v2a7 7 0 01-14 0v-2M12 19v4M8 23h8" />
       </svg>
     ),
-    6: ( // vídeos
+    6: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M15 10l4.553-2.069A1 1 0 0121 8.882v6.236a1 1 0 01-1.447.894L15 14M3 8a2 2 0 012-2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V8z" />
       </svg>
     ),
-    7: ( // música
+    7: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 18V5l12-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="18" cy="16" r="3" />
       </svg>
     ),
-    8: ( // legendas
+    8: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <rect x="2" y="7" width="20" height="15" rx="2" /><path d="M17 2l-5 5-5-5" />
       </svg>
     ),
-    9: ( // export
+    9: (
       <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3" />
       </svg>
@@ -165,7 +187,7 @@ function AgentIcon({ id, status }: { id: number; status: AgentStatus }) {
 
 // ── Componente de agente ──────────────────────────────────────
 
-function AgentRow({ agent, status, progress }: { agent: Agent; status: AgentStatus; progress?: number }) {
+function AgentRow({ agent, status, progress, inputMode }: { agent: Agent; status: AgentStatus; progress?: number; inputMode: InputMode }) {
   const borderMap: Record<AgentStatus, string> = {
     idle: "border-border bg-surface",
     active: "border-purple-border bg-purple-dim/30",
@@ -173,16 +195,21 @@ function AgentRow({ agent, status, progress }: { agent: Agent; status: AgentStat
     error: "border-red-400/20 bg-red-dim",
   };
 
+  const isRefMode = inputMode === "referencia";
+  const displayName = isRefMode && agent.refName ? agent.refName : agent.name;
+  const baseDesc = isRefMode && agent.refDesc ? agent.refDesc : agent.desc;
+  const activeDesc = isRefMode && agent.refDescActive ? agent.refDescActive : agent.descActive;
+  const doneDesc = isRefMode && agent.refDescDone ? agent.refDescDone : agent.descDone;
+
   const desc =
-    status === "active" && agent.descActive
-      ? agent.descActive
-      : status === "done" && agent.descDone
-      ? agent.descDone
-      : agent.desc;
+    status === "active" && activeDesc
+      ? activeDesc
+      : status === "done" && doneDesc
+      ? doneDesc
+      : baseDesc;
 
   return (
     <div className={`flex items-start gap-3 p-3 rounded-[8px] border transition-all duration-200 ${borderMap[status]}`}>
-      {/* Número / check */}
       <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-semibold flex-shrink-0 mt-2
         ${status === "done" ? "bg-green text-white" : status === "active" ? "bg-purple text-white" : "bg-surface-3 text-text-3 border border-border"}`}>
         {status === "done" ? (
@@ -199,7 +226,7 @@ function AgentRow({ agent, status, progress }: { agent: Agent; status: AgentStat
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 mb-0.5">
           <span className={`text-[13px] font-medium ${status === "idle" ? "text-text-3" : "text-text"}`}>
-            {agent.name}
+            {displayName}
           </span>
           <span className={`text-[10px] font-mono ${status === "done" ? "text-green" : status === "active" ? "text-purple-light" : "text-text-3"}`}>
             {agent.api}
@@ -218,7 +245,6 @@ function AgentRow({ agent, status, progress }: { agent: Agent; status: AgentStat
         )}
       </div>
 
-      {/* Status dot */}
       <div className="flex-shrink-0 mt-2.5">
         {status === "active" && (
           <div className="w-2 h-2 rounded-full bg-purple shadow-[0_0_0_3px_rgba(124,109,245,0.2)] animate-pulse" />
@@ -238,13 +264,13 @@ function AgentRow({ agent, status, progress }: { agent: Agent; status: AgentStat
 
 export default function StudioPage() {
   const [topic, setTopic] = useState("");
+  const [inputMode, setInputMode] = useState<InputMode>("tema");
+  const [referenceUrl, setReferenceUrl] = useState("");
   const [duration, setDuration] = useState("8");
   const [style, setStyle] = useState("documentary");
   const [voice, setVoice] = useState("male-deep");
   const [language, setLanguage] = useState("pt-BR");
 
-  // Simulação de estado do pipeline (substituir por WebSocket real)
-  // 0 = não iniciado, 1-9 = agente ativo, 10 = concluído
   const [currentAgent, setCurrentAgent] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
 
@@ -259,13 +285,16 @@ export default function StudioPage() {
     "5": 40, "8": 65, "12": 90, "15": 110,
   };
 
+  const refExtraCredits = 10;
+
   const estimatedTime: Record<string, string> = {
     "5": "~8 min", "8": "~12 min", "12": "~18 min", "15": "~22 min",
   };
 
-  // Simulação local (remover quando integrar WebSocket real)
+  const canGenerate = inputMode === "tema" ? !!topic.trim() : !!referenceUrl.trim();
+
   function handleGenerate() {
-    if (!topic.trim()) return;
+    if (!canGenerate) return;
     setIsRunning(true);
     setCurrentAgent(1);
 
@@ -279,7 +308,7 @@ export default function StudioPage() {
       } else {
         setCurrentAgent(agent);
       }
-    }, 2000); // 2s por agente na simulação
+    }, 2000);
   }
 
   const isDone = currentAgent === 10;
@@ -290,17 +319,15 @@ export default function StudioPage() {
   return (
     <div className="flex flex-1 overflow-hidden" style={{ height: "calc(100vh - 56px)" }}>
 
-      {/* ── Área principal ──────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
 
-        {/* Header */}
         <div className="flex items-center gap-3">
           <div>
             <h1 className="font-tight text-[20px] font-bold text-text tracking-tight">
               ClipForge Studio
             </h1>
             <p className="text-[12px] text-text-2">
-              Digite um tema e receba um documentário completo pronto para o YouTube
+              Digite um tema ou cole o link de um vídeo de referência e receba um documentário completo pronto para o YouTube
             </p>
           </div>
           {activeAgentLabel && (
@@ -314,35 +341,94 @@ export default function StudioPage() {
           )}
         </div>
 
-        {/* Input de tema */}
+        {/* Alternância Tema / Link de referência */}
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
-            Tema do vídeo
-          </p>
-          <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${topic ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
-            <div className="p-3.5 pb-0">
-              <textarea
-                className="w-full bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3 resize-none leading-relaxed"
-                rows={3}
-                placeholder="Ex: Davi e Golias — a história de como um jovem pastor derrotou o guerreiro mais temido de Israel com fé e coragem..."
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                disabled={isRunning}
-              />
-            </div>
-            <div className="flex items-center gap-2 px-3 py-2 border-t border-border">
-              {["Bíblico", "Motivacional", "Documentário", "Educativo"].map((tag) => (
-                <button
-                  key={tag}
-                  onClick={() => setTopic((prev) => prev ? prev : tag + " — ")}
-                  className="text-[11px] px-2.5 py-1 rounded-full border border-border bg-surface text-text-3 hover:text-text-2 hover:border-border-strong transition-colors"
-                >
-                  {tag}
-                </button>
-              ))}
-            </div>
+          <div className="flex items-center gap-1 p-1 rounded-[10px] bg-surface-2 border border-border w-fit">
+            <button
+              onClick={() => setInputMode("tema")}
+              disabled={isRunning}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-[7px] text-[12px] font-medium transition-colors
+                ${inputMode === "tema" ? "bg-purple text-white" : "text-text-3 hover:text-text-2"}`}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+              Tema
+            </button>
+            <button
+              onClick={() => setInputMode("referencia")}
+              disabled={isRunning}
+              className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-[7px] text-[12px] font-medium transition-colors
+                ${inputMode === "referencia" ? "bg-purple text-white" : "text-text-3 hover:text-text-2"}`}
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+              </svg>
+              Link de referência
+              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-purple-dim text-purple-light border border-purple-border ml-0.5">
+                NOVO
+              </span>
+            </button>
           </div>
         </div>
+
+        {/* Input de tema OU link de referência */}
+        {inputMode === "tema" ? (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
+              Tema do vídeo
+            </p>
+            <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${topic ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
+              <div className="p-3.5 pb-0">
+                <textarea
+                  className="w-full bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3 resize-none leading-relaxed"
+                  rows={3}
+                  placeholder="Ex: Davi e Golias — a história de como um jovem pastor derrotou o guerreiro mais temido de Israel com fé e coragem..."
+                  value={topic}
+                  onChange={(e) => setTopic(e.target.value)}
+                  disabled={isRunning}
+                />
+              </div>
+              <div className="flex items-center gap-2 px-3 py-2 border-t border-border">
+                {["Bíblico", "Motivacional", "Documentário", "Educativo"].map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setTopic((prev) => prev ? prev : tag + " — ")}
+                    className="text-[11px] px-2.5 py-1 rounded-full border border-border bg-surface text-text-3 hover:text-text-2 hover:border-border-strong transition-colors"
+                  >
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-2">
+              Link do vídeo de referência
+            </p>
+            <div className={`bg-surface-2 border rounded-[10px] overflow-hidden transition-colors ${referenceUrl ? "border-purple-border" : "border-border"} focus-within:border-purple-border`}>
+              <div className="flex items-center gap-2 p-3.5">
+                <svg className="w-4 h-4 text-text-3 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71" /><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71" />
+                </svg>
+                <input
+                  type="text"
+                  className="flex-1 bg-transparent border-none outline-none text-[14px] text-text placeholder:text-text-3"
+                  placeholder="https://youtube.com/watch?v=..."
+                  value={referenceUrl}
+                  onChange={(e) => setReferenceUrl(e.target.value)}
+                  disabled={isRunning}
+                />
+              </div>
+              <div className="px-3.5 pb-3 pt-0">
+                <p className="text-[11px] text-text-3 leading-relaxed">
+                  🔒 Analisamos a <strong className="text-text-2">estrutura</strong> do vídeo (roteiro, ritmo, estilo visual) pra gerar algo novo na mesma linha — nunca baixamos nem reaproveitamos as imagens ou clipes originais. O vídeo final é 100% gerado por IA, com roteiro e cenas próprios.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Configurações */}
         <div>
@@ -417,9 +503,9 @@ export default function StudioPage() {
         <div className="flex items-center gap-4">
           <button
             onClick={handleGenerate}
-            disabled={isRunning || !topic.trim()}
+            disabled={isRunning || !canGenerate}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-[8px] text-[13px] font-medium transition-all
-              ${isRunning || !topic.trim()
+              ${isRunning || !canGenerate
                 ? "bg-surface-2 text-text-3 border border-border cursor-not-allowed"
                 : "bg-purple text-white hover:opacity-90 cursor-pointer"
               }`}
@@ -439,8 +525,13 @@ export default function StudioPage() {
             )}
           </button>
           <span className="text-[12px] text-text-3">
-            ≈ <span className="text-purple-light font-medium">{creditCost[duration]} créditos</span>
+            ≈ <span className="text-purple-light font-medium">
+              {creditCost[duration] + (inputMode === "referencia" ? refExtraCredits : 0)} créditos
+            </span>
             {" · "}{estimatedTime[duration]}
+            {inputMode === "referencia" && (
+              <span className="text-text-3"> (+{refExtraCredits}cr pela análise de referência)</span>
+            )}
           </span>
         </div>
 
@@ -456,6 +547,7 @@ export default function StudioPage() {
                 agent={agent}
                 status={getAgentStatus(agent.id)}
                 progress={agent.id === currentAgent ? 48 : undefined}
+                inputMode={inputMode}
               />
             ))}
           </div>
@@ -463,10 +555,8 @@ export default function StudioPage() {
 
       </div>
 
-      {/* ── Painel direito ───────────────────────────────── */}
       <aside className="w-[260px] flex-shrink-0 border-l border-border bg-surface flex flex-col overflow-y-auto">
 
-        {/* Preview */}
         <div className="p-4 border-b border-border">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-3">
             Preview
@@ -502,7 +592,6 @@ export default function StudioPage() {
           )}
         </div>
 
-        {/* Vídeos recentes */}
         <div className="p-4">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-text-3 mb-3">
             Recentes no Studio
