@@ -90,17 +90,37 @@ def generate_studio_video(
     voice_id: str,
     language: str,
     credits_used: int,
+    reference_url: str = "",
 ):
     print(f"[Pipeline] Iniciando projeto {project_id}")
+    is_reference = bool(reference_url.strip()) if reference_url else False
 
     try:
         update_progress(project_id, 1, "researching")
-        from services.studio.research_agent import run as research
-        research_result = asyncio.run(research(topic, language))
+        from services.studio.research_agent import run as research, run_from_reference
+
+        if is_reference:
+            research_result = asyncio.run(run_from_reference(reference_url, language))
+            # No modo referência, o tema pode vir vazio (usuário só colou o
+            # link) — nesse caso usa o título do vídeo de referência como
+            # tema base, já deixando claro no roteiro (via prompt) que é
+            # pra ser tratado de forma original, não uma cópia.
+            effective_topic = topic.strip() if topic and topic.strip() else research_result.get("reference_title", "Tema do vídeo de referência")
+        else:
+            research_result = asyncio.run(research(topic, language))
+            effective_topic = topic
 
         update_progress(project_id, 2, "scripting")
         from services.studio.script_agent import run as script
-        script_result = asyncio.run(script(topic, research_result, duration_minutes, style, language))
+        script_result = asyncio.run(script(
+            effective_topic,
+            research_result,
+            duration_minutes,
+            style,
+            language,
+            is_reference=is_reference,
+            visual_style=research_result.get("visual_style", "") if is_reference else "",
+        ))
 
         db = get_supabase()
         db.table("studio_projects").update({"script": script_result}).eq("id", project_id).execute()
